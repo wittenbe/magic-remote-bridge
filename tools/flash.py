@@ -65,9 +65,14 @@ def main():
     if bridge:
         print(f"bridge firmware on {bridge}: rebooting it into download mode")
         try:
-            with serial.Serial(bridge, 115200, timeout=0.2) as s:
-                s.write(b"\r\ndl\r\n")
-                time.sleep(0.3)
+            s = serial.Serial(bridge, 115200, timeout=0.2)
+        except (serial.SerialException, OSError) as e:
+            sys.exit(f"can't open {bridge} ({e}).\nOn Windows only one program can use a COM port: "
+                     "close tools/console.py or any serial terminal and try again.")
+        try:
+            s.write(b"\r\ndl\r\n")
+            time.sleep(0.3)
+            s.close()
         except (serial.SerialException, OSError):
             pass  # the port disappears while we're still writing: expected
 
