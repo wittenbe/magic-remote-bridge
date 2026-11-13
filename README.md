@@ -36,3 +36,7 @@ Working with an MR25GB and a 2025 LG OLED (webOS): TV relay including pointer, P
 ## Planned
 
 - Configuration page (WebSerial, runs in Chrome/Edge): key map, mode-switch key, pointer settings.
+
+## License
+
+[MIT](LICENSE)

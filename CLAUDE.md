@@ -41,4 +41,3 @@ Start with [README.md](README.md) and [docs/](docs/); [docs/protocol.md](docs/pr
   running and fix `pc.c`/docs.
 - Advertising flags: 0x06 works; the real remote uses 0x05, never confirmed with the bridge.
 - FE report (probably microphone audio) is unexplored.
-- No license file yet; ask the user.
