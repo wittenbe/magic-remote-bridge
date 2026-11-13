@@ -1,0 +1,12 @@
+# ESP-IDF build output and generated config
+firmware/build/
+firmware/managed_components/
+firmware/sdkconfig
+firmware/sdkconfig.old
+
+# captures and logs (may contain other people's Bluetooth devices)
+*.btsnoop
+*.log
+
+__pycache__/
+*.pyc
