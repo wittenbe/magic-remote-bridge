@@ -10,6 +10,10 @@
 
 static const char *TAG = "remote";
 
+#define LINK_ITVL 11  // 13.75 ms: the shortest connection interval the controller accepts here (see on subscribe)
+static esp_timer_handle_t link_timer;
+static void link_timer_cb(void *arg);
+
 // A freshly paired remote (pairing mode) expects the TV's init sequence on F9 Output; without it, it gives up after
 // ~12 s (F9 In "00", "40 00", 0x803F, disconnect). Normally the TV sends it through the relay; this recorded copy is
 // only a fallback (see docs/protocol.md).
@@ -151,6 +155,11 @@ static int on_cccd_written(uint16_t conn_handle, const struct ble_gatt_error *er
         return 0;
     }
     ESP_LOGI(TAG, "subscribed (F9/FD/FE)");
+    // The remote asks for 10 ms itself about 1 s in, but the controller rejects intervals below 13.75 ms
+    // (HCI 0x12), which left the link at 40-50 ms: reports bunched up four at a time and ~15% were dropped,
+    // a visibly stepping PC pointer. Ask for the fastest interval it accepts once the remote's request is done.
+    // Accepting the remote's request in BLE_GAP_EVENT_L2CAP_UPDATE_REQ instead crashed the bridge.
+    esp_timer_start_once(link_timer, 2000 * 1000);
     if (fresh_pairing) {
         fresh_pairing = false;
         handshake_pending = true;
@@ -339,6 +348,8 @@ void remote_init(remote_notify_cb_t on_notify, remote_state_cb_t on_state)
 {
     notify_cb = on_notify;
     state_cb = on_state;
+    const esp_timer_create_args_t a = {.callback = link_timer_cb, .name = "link_update"};
+    esp_timer_create(&a, &link_timer);
 }
 
 void remote_start(void)
@@ -404,6 +415,25 @@ int remote_set_addr(const char *str)
     return 0;
 }
 
+static void link_timer_cb(void *arg)
+{
+    remote_update_link(LINK_ITVL, LINK_ITVL, 0);
+}
+
+int remote_update_link(uint16_t itvl_min, uint16_t itvl_max, uint16_t latency)
+{
+    if (conn == BLE_HS_CONN_HANDLE_NONE) {
+        return -1;
+    }
+    struct ble_gap_upd_params p = {
+        .itvl_min = itvl_min, .itvl_max = itvl_max, .latency = latency, .supervision_timeout = 300,
+        .min_ce_len = 0, .max_ce_len = 0,
+    };
+    int rc = ble_gap_update_params(conn, &p);
+    ESP_LOGI(TAG, "link update requested: itvl %u-%u, latency %u: rc %d", itvl_min, itvl_max, latency, rc);
+    return rc;
+}
+
 void remote_status(void)
 {
     load_bond();
@@ -411,4 +441,9 @@ void remote_status(void)
              conn == BLE_HS_CONN_HANDLE_NONE ? "none" : "up", ready, have_bond ? "yes" : "no", bonded_addr.val[5],
              bonded_addr.val[4], bonded_addr.val[3], bonded_addr.val[2], bonded_addr.val[1], bonded_addr.val[0],
              ble_gap_disc_active());
+    struct ble_gap_conn_desc desc;
+    if (conn != BLE_HS_CONN_HANDLE_NONE && ble_gap_conn_find(conn, &desc) == 0) {
+        ESP_LOGI(TAG, "link: itvl %u (x1.25 ms), latency %u, timeout %u (x10 ms)", desc.conn_itvl,
+                 desc.conn_latency, desc.supervision_timeout);
+    }
 }

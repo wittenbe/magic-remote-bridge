@@ -1,16 +1,19 @@
 #include "usb.h"
 
+#include <math.h>
 #include <string.h>
 #include "esp_log.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "esp_private/periph_ctrl.h"
 #include "soc/rtc_cntl_reg.h"
 #include "tinyusb.h"
 #include "tusb_cdc_acm.h"
 #include "tusb_console.h"
 #include "class/hid/hid_device.h"
+#include "settings.h"
 
 static const char *TAG = "usb";
 
@@ -117,6 +120,7 @@ void usb_init(usb_line_cb_t on_line)
     };
     ESP_ERROR_CHECK(tusb_cdc_acm_init(&acm_cfg));
     esp_tusb_init_console(TINYUSB_CDC_ACM_0);  // ESP_LOG / printf → CDC
+    usb_hid_start();
     ESP_LOGI(TAG, "USB up (CDC console + HID keyboard/mouse/consumer)");
 }
 
@@ -125,23 +129,100 @@ bool usb_hid_mounted(void)
     return tud_mounted();
 }
 
-/* ---- HID ---- */
+/* ---- HID ----
+ * All HID reports go out from one task. Callers (the BLE host task, the console) only queue: waiting for the
+ * endpoint there stalled the BLE path for a whole FreeRTOS tick, and two tasks racing for the endpoint can lose
+ * reports. Motion is not queued but accumulated and paced, see hid_task(). */
 
-static bool hid_wait_ready(void)
+#define HID_QUEUE_LEN 16
+
+typedef struct {
+    uint8_t id;
+    uint8_t len;
+    uint8_t data[8];
+} hid_msg_t;
+
+static QueueHandle_t hid_queue;
+static portMUX_TYPE motion_lock = portMUX_INITIALIZER_UNLOCKED;
+static float motion_backlog[2], motion_step[2];  // px still to send, px per ms
+static int motion_wheel;
+static uint8_t mouse_buttons;
+volatile uint32_t usb_mouse_reports;  // motion reports sent (pointer timing stats in pc.c)
+
+static void hid_queue_report(uint8_t id, const void *data, uint8_t len)
 {
-    for (int i = 0; i < 20; i++) {
+    hid_msg_t m = {.id = id, .len = len};
+    memcpy(m.data, data, len);
+    if (!hid_queue || xQueueSend(hid_queue, &m, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "HID queue full, report %u dropped", id);
+    }
+}
+
+static int8_t clamp8(float v)
+{
+    return v > 127 ? 127 : v < -127 ? -127 : (int8_t)v;
+}
+
+// Remote reports arrive at 100 Hz, and BLE delivers them with jitter (sometimes two in one connection event).
+// Forwarding each one as a single USB report moved the cursor in visible 10 ms jumps. Instead every report's
+// motion is spread evenly over the next `smooth` ms and sent at the 1 kHz USB poll rate; a backlog from a late
+// burst is caught up within the same window. Costs `smooth` ms of latency.
+static void hid_task(void *arg)
+{
+    float out[2] = {0, 0};  // sub-pixel remainder already "sent"
+    for (;;) {
+        vTaskDelay(1);  // 1 ms (CONFIG_FREERTOS_HZ=1000)
         if (!tud_mounted()) {
-            return false;
+            continue;
+        }
+
+        bool motion = false;
+        int wheel;
+        portENTER_CRITICAL(&motion_lock);
+        for (int i = 0; i < 2; i++) {
+            float step = motion_step[i];
+            if (fabsf(step) > fabsf(motion_backlog[i]) || step * motion_backlog[i] < 0) {
+                step = motion_backlog[i];
+            }
+            motion_backlog[i] -= step;
+            out[i] += step;
+        }
+        wheel = motion_wheel;
+        portEXIT_CRITICAL(&motion_lock);
+        motion = fabsf(out[0]) >= 1 || fabsf(out[1]) >= 1 || wheel;
+
+        hid_msg_t m;
+        bool queued = uxQueueMessagesWaiting(hid_queue) > 0;
+        if (!queued && !motion) {
+            continue;
         }
         if (tud_suspended()) {
             tud_remote_wakeup();
+            continue;
         }
-        if (tud_hid_ready()) {
-            return true;
+        if (!tud_hid_ready()) {
+            continue;  // keep accumulating, nothing is lost
         }
-        vTaskDelay(1);
+        if (queued && xQueueReceive(hid_queue, &m, 0) == pdTRUE) {
+            tud_hid_report(m.id, m.data, m.len);
+            continue;  // buttons/keys first; motion goes out on the next poll
+        }
+        int8_t x = clamp8(out[0]), y = clamp8(out[1]), w = clamp8(wheel);
+        if (tud_hid_mouse_report(RID_MOUSE, mouse_buttons, x, y, w, 0)) {
+            usb_mouse_reports++;
+            out[0] -= x;
+            out[1] -= y;
+            portENTER_CRITICAL(&motion_lock);
+            motion_wheel -= w;
+            portEXIT_CRITICAL(&motion_lock);
+        }
     }
-    return false;
+}
+
+void usb_hid_start(void)
+{
+    hid_queue = xQueueCreate(HID_QUEUE_LEN, sizeof(hid_msg_t));
+    xTaskCreate(hid_task, "hid", 3072, NULL, 5, NULL);
 }
 
 static uint8_t kbd_modifiers;
@@ -149,9 +230,9 @@ static uint8_t kbd_keys[6];
 
 static void kbd_send(void)
 {
-    if (hid_wait_ready()) {
-        tud_hid_keyboard_report(RID_KEYBOARD, kbd_modifiers, kbd_keys);
-    }
+    uint8_t r[8] = {kbd_modifiers, 0};
+    memcpy(&r[2], kbd_keys, 6);
+    hid_queue_report(RID_KEYBOARD, r, sizeof(r));
 }
 
 void usb_key(uint8_t usage, bool down)
@@ -180,41 +261,34 @@ void usb_key(uint8_t usage, bool down)
     kbd_send();
 }
 
-static uint8_t mouse_buttons;
-
 void usb_mouse_buttons(uint8_t buttons)
 {
     mouse_buttons = buttons;
-    if (hid_wait_ready()) {
-        tud_hid_mouse_report(RID_MOUSE, mouse_buttons, 0, 0, 0, 0);
-    }
+    uint8_t r[5] = {buttons, 0, 0, 0, 0};  // buttons, x, y, wheel, pan (TUD_HID_REPORT_DESC_MOUSE)
+    hid_queue_report(RID_MOUSE, r, sizeof(r));
 }
 
-static int8_t clamp8(int v)
+void usb_mouse_motion(float dx, float dy, int wheel)
 {
-    return v > 127 ? 127 : v < -127 ? -127 : v;
+    uint32_t ticks = settings.smooth ? settings.smooth : 1;
+    portENTER_CRITICAL(&motion_lock);
+    motion_backlog[0] += dx;
+    motion_backlog[1] += dy;
+    motion_step[0] = motion_backlog[0] / ticks;
+    motion_step[1] = motion_backlog[1] / ticks;
+    motion_wheel += wheel;
+    portEXIT_CRITICAL(&motion_lock);
 }
 
 void usb_mouse_move(int dx, int dy, int wheel)
 {
-    while (dx || dy || wheel) {
-        int8_t x = clamp8(dx), y = clamp8(dy), w = clamp8(wheel);
-        if (!hid_wait_ready()) {
-            return;
-        }
-        tud_hid_mouse_report(RID_MOUSE, mouse_buttons, x, y, w, 0);
-        dx -= x;
-        dy -= y;
-        wheel -= w;
-    }
+    usb_mouse_motion(dx, dy, wheel);
 }
 
 void usb_consumer(uint16_t usage, bool down)
 {
     uint16_t value = down ? usage : 0;
-    if (hid_wait_ready()) {
-        tud_hid_report(RID_CONSUMER, &value, sizeof(value));
-    }
+    hid_queue_report(RID_CONSUMER, &value, sizeof(value));
 }
 
 void usb_reboot_to_download(void)

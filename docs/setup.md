@@ -13,8 +13,15 @@
 
 The firmware needs **ESP-IDF v5.4.x**.
 
-**Windows:** install with the [ESP-IDF Tools Installer](https://dl.espressif.com/dl/esp-idf/) (choose v5.4.x),
-then use the "ESP-IDF PowerShell" shortcut for all commands below.
+**Windows:** either install with the [ESP-IDF Tools Installer](https://dl.espressif.com/dl/esp-idf/) (choose
+v5.4.x) and use the "ESP-IDF PowerShell" shortcut for the commands below, or install it by script:
+```powershell
+mkdir ~\esp; cd ~\esp
+git clone --depth 1 --branch v5.4.1 --recurse-submodules --shallow-submodules https://github.com/espressif/esp-idf.git
+.\esp-idf\install.ps1 esp32s3
+```
+With the scripted install, `.\tools\flash.ps1` builds and flashes from any PowerShell (it loads ESP-IDF from
+`$env:IDF_PATH` or `~\esp\esp-idf` and runs `set-target` on the first build).
 
 **Linux:**
 ```sh

@@ -19,6 +19,10 @@ These are the non-obvious things that cost time during development.
 - **Connection parameters toward the remote:** request 30–50 ms at connect time; the remote switches to 10 ms
   itself. A 10 ms interval in the connect request fails with 0x3E (connection failed to be established).
   Use a long supervision timeout (3 s).
+- **The remote's 10 ms request fails:** about 1 s after connecting the remote asks for 10 ms / latency 4; the
+  ESP32-S3 controller rejects anything below 13.75 ms with HCI 0x12 (invalid parameters), and the link stays at
+  40–50 ms, so the PC pointer steps visibly and ~15% of reports are lost. The bridge requests 13.75 ms itself
+  2 s after subscribing. Check with `status` (`link: itvl 11`).
 - **NimBLE (ESP-IDF 5.4):** call `ble_gap_security_initiate()` on `BLE_GAP_EVENT_LINK_ESTAB`, not on `CONNECT`;
   on CONNECT it is silently dropped, and the TV never starts pairing. Copy `event->disc.addr` before calling
   `ble_gap_disc_cancel()`, the cancel reuses the event buffer.

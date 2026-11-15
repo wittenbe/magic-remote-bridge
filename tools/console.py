@@ -12,6 +12,9 @@ import sys
 import threading
 import time
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # the log contains → etc.
+
 import serial
 from serial.tools import list_ports
 

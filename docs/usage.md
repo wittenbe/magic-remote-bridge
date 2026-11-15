@@ -47,6 +47,7 @@ Stored on the board, changed with `set <name> <value>` on the console (see below
 | `accel` | 1.0 | pointer acceleration: fast movements up to 1 + 4·accel times faster; 0 = off |
 | `tvsleep` | 0 | TV mode: seconds of idle before the TV's sleep command reaches the remote; 0 = immediately, like without the bridge |
 | `pcsleep` | 10 | PC mode: seconds of idle before the bridge puts the remote to sleep; 0 = never (drains the battery) |
+| `smooth` | 15 | PC mode: each pointer report's motion is spread over this many ms at the 1 kHz USB rate; 0 = send at once (choppier, 10 ms less latency) |
 
 A sleeping remote wakes on any key press; the first press is delivered.
 
@@ -57,6 +58,8 @@ A sleeping remote wakes on any key press; the first press is delivered.
 | `status` | connections, subscriptions, mode, settings |
 | `settings` / `set <name> <value>` | show / change settings |
 | `mode` | toggle TV/PC mode (same as holding red) |
+| `timing` | toggle a once-per-second log of pointer report timing (arrival gaps, lost reports, USB reports sent) |
+| `link <min> <max> <latency>` | request new connection parameters for the remote link (units of 1.25 ms) |
 | `forget` | forget the paired remote and scan for a new one |
 | `setremote AA:BB:CC:DD:EE:FF` | tell the bridge which bonded device is the remote (only needed after upgrading from firmware that didn't record it) |
 | `dl` | reboot into download mode (used by `flash.py`) |

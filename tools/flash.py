@@ -83,9 +83,19 @@ def main():
     esptool = os.path.join(idf_path, "components", "esptool_py", "esptool", "esptool.py")
     cmd = [sys.executable, esptool, "--chip", "esp32s3", "-p", rom, "-b", "460800", "--before", "default_reset",
            "--after", "watchdog_reset", "write_flash", "@flash_args"]
-    r = subprocess.run(cmd, cwd=os.path.join(FIRMWARE, "build"))
-    if r.returncode != 0:
-        sys.exit("flashing failed")
+    p = subprocess.Popen(cmd, cwd=os.path.join(FIRMWARE, "build"), stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT, text=True)
+    out = []
+    for line in p.stdout:
+        print(line, end="")
+        out.append(line)
+    if p.wait() != 0:
+        # On Windows the watchdog reset makes the ROM's port vanish while esptool still holds it, and esptool
+        # reports that as an error although everything was written and verified.
+        text = "".join(out)
+        if "Leaving..." not in text or "Hash of data verified" not in text:
+            sys.exit("flashing failed")
+        print("(esptool lost the port during the reset: harmless, the flash was verified)")
 
     if wait_for_port(PID_BRIDGE, 15):
         print("bridge firmware running")

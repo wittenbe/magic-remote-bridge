@@ -71,3 +71,7 @@ Gyro bias is re-estimated whenever the remote is still for 0.5 s. The rotation i
 cursor moves correctly even when the remote is held tilted. Speed is `gain` px per gyro LSB per report; above
 ~18 °/s the factor grows with the rotation rate (`accel`), up to 1 + 4·accel. The pointer freezes for 150 ms
 around clicks.
+
+HID reports leave from one USB task (`usb.c`); the BLE path only queues key/button reports and adds motion to a
+backlog. The remote's 100 Hz reports arrive with BLE jitter, so instead of one jump per report the task spreads
+each report's motion over the next `smooth` ms and sends it at the 1 kHz USB poll rate.

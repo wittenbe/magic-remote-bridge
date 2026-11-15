@@ -149,7 +149,7 @@ static void on_line(const char *line)
         }
     } else if (sscanf(line, "set %15s %f", name, &f) == 2) {
         if (settings_set(name, f)) {
-            ESP_LOGW(TAG, "unknown setting %s (gain | accel | tvsleep | pcsleep)", name);
+            ESP_LOGW(TAG, "unknown setting %s (gain | accel | tvsleep | pcsleep | smooth)", name);
         }
     } else if (!strcmp(line, "settings")) {
         settings_print();
@@ -159,17 +159,21 @@ static void on_line(const char *line)
         pc_status();
         settings_print();
         ESP_LOGI(TAG, "hid mounted: %d, free heap: %u", usb_hid_mounted(), (unsigned)esp_get_free_heap_size());
+    } else if (!strcmp(line, "timing")) {
+        pc_toggle_timing_log();
     } else if (!strcmp(line, "forget")) {
         remote_forget();
     } else if (sscanf(line, "key %i", &a) == 1) {
         usb_key(a, true);
         vTaskDelay(pdMS_TO_TICKS(30));
         usb_key(a, false);
+    } else if (sscanf(line, "link %i %i %i", &a, &b, &c) == 3) {
+        remote_update_link(a, b, c);
     } else if (sscanf(line, "move %i %i %i", &a, &b, &c) >= 2) {
         usb_mouse_move(a, b, c);
     } else {
-        ESP_LOGW(TAG, "commands: status | settings | set <gain|accel|tvsleep|pcsleep> <value> | mode | forget | "
-                      "setremote <addr> | dl | key <usage> | move <dx> <dy> [wheel]");
+        ESP_LOGW(TAG, "commands: status | settings | set <gain|accel|tvsleep|pcsleep|smooth> <value> | mode | timing | forget | "
+                      "setremote <addr> | link <itvl_min> <itvl_max> <latency> | dl | key <usage> | move <dx> <dy> [wheel]");
     }
 }
 

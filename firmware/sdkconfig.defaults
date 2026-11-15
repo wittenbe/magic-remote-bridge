@@ -6,6 +6,8 @@ CONFIG_TINYUSB_DESC_MANUFACTURER_STRING="rc"
 CONFIG_TINYUSB_DESC_PRODUCT_STRING="Magic Remote Bridge"
 CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+# 1 ms ticks: the HID task paces pointer motion at the 1 kHz USB poll rate (100 Hz would mean 10 ms steps)
+CONFIG_FREERTOS_HZ=1000
 # BLE: NimBLE, central (real remote) + peripheral (TV), bonds in NVS
 CONFIG_BT_ENABLED=y
 CONFIG_BT_BLUEDROID_ENABLED=n

@@ -11,6 +11,7 @@ settings_t settings = {
     .accel = 1.0f,
     .tv_sleep = 0,
     .pc_sleep = 10,
+    .smooth = 15,
 };
 
 void settings_load(void)
@@ -19,9 +20,9 @@ void settings_load(void)
     if (nvs_open("mrb", NVS_READONLY, &h) != ESP_OK) {
         return;  // nothing stored yet: defaults
     }
-    settings_t s;
+    settings_t s = settings;  // a blob from older firmware is shorter: the fields it lacks keep their defaults
     size_t len = sizeof(s);
-    if (nvs_get_blob(h, "settings", &s, &len) == ESP_OK && len == sizeof(s)) {
+    if (nvs_get_blob(h, "settings", &s, &len) == ESP_OK && len <= sizeof(s)) {
         settings = s;
     }
     nvs_close(h);
@@ -49,6 +50,8 @@ int settings_set(const char *name, float value)
         settings.tv_sleep = value < 0 ? 0 : (uint32_t)value;
     } else if (!strcmp(name, "pcsleep")) {
         settings.pc_sleep = value < 0 ? 0 : (uint32_t)value;
+    } else if (!strcmp(name, "smooth")) {
+        settings.smooth = value < 0 ? 0 : value > 100 ? 100 : (uint32_t)value;
     } else {
         return -1;
     }
@@ -59,7 +62,7 @@ int settings_set(const char *name, float value)
 
 void settings_print(void)
 {
-    ESP_LOGI(TAG, "gain=%.4f accel=%.2f tvsleep=%lus%s pcsleep=%lus%s", settings.gain, settings.accel,
+    ESP_LOGI(TAG, "gain=%.4f accel=%.2f tvsleep=%lus%s pcsleep=%lus%s smooth=%lums", settings.gain, settings.accel,
              (unsigned long)settings.tv_sleep, settings.tv_sleep ? "" : " (TV decides)",
-             (unsigned long)settings.pc_sleep, settings.pc_sleep ? "" : " (never)");
+             (unsigned long)settings.pc_sleep, settings.pc_sleep ? "" : " (never)", (unsigned long)settings.smooth);
 }

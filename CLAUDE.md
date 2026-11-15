@@ -9,7 +9,8 @@ Start with [README.md](README.md) and [docs/](docs/); [docs/protocol.md](docs/pr
   log afterwards instead of guessing.
 - The ESP32-S3 is plugged into the PC it controls. Its log and command console: `python tools/console.py`
   (`-c status -t 2` for one-shot). Useful commands: `status`, `settings`, `set <name> <value>`, `mode`, `forget`.
-- Build + flash from an ESP-IDF shell: `python tools/flash.py` (no buttons needed while the bridge firmware runs).
+- Build + flash: `.\tools\flash.ps1` from any PowerShell (loads ESP-IDF from `~\esp\esp-idf`), or
+  `python tools/flash.py` from an ESP-IDF shell. No buttons needed while the bridge firmware runs.
   Manual download mode if needed: hold B, tap R, release B.
 - **Windows: a COM port can only be opened by one program.** Stop `console.py` (or any serial terminal) before
   `flash.py`, otherwise it can't send `dl` to the board. On Linux both can run.
@@ -33,8 +34,11 @@ Start with [README.md](README.md) and [docs/](docs/); [docs/protocol.md](docs/pr
 
 ## Open items
 
-- Test pointer acceleration and the sleep settings on Windows (`gain`, `accel`, `tvsleep`, `pcsleep`; defaults in
-  `settings.c`).
+- Test the sleep settings on Windows (`tvsleep`, `pcsleep`; defaults in `settings.c`). Pointer: the user runs
+  `accel 0`, double `gain`; smooth enough with the 13.75 ms link + `smooth 15`. Remaining 25-40 ms gaps (missed
+  connection events next to the TV link) could be hidden with a ~40 ms jitter buffer, at the cost of latency.
+- Why the controller rejects connection intervals below 13.75 ms is unknown (maybe multi-connection scheduling);
+  accepting the remote's own update request in `BLE_GAP_EVENT_L2CAP_UPDATE_REQ` rebooted the bridge.
 - Configuration page: WebSerial (Chrome/Edge) on top of the console commands: key map, mode-switch key + hold time,
   pointer settings. Key map and switch key are still compiled in (`KEYMAP`, `RED` in `pc.c`) and would move to NVS.
 - Unconfirmed button codes (Settings, colour keys except red, Play/Pause, "…", Voice): log them with `status`

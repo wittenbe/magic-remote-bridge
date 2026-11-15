@@ -19,6 +19,8 @@ bool remote_ready(void);
 bool remote_bonded(void);
 // Forward a write (from the TV) to the remote; Write Command, like the TV does.
 int remote_write(uint16_t handle, const uint8_t *data, uint16_t len);
+// Ask for new connection parameters (units of 1.25 ms), e.g. 8, 8, 0 = 10 ms. Returns the NimBLE rc.
+int remote_update_link(uint16_t itvl_min, uint16_t itvl_max, uint16_t latency);
 void remote_forget(void);          // drop the bond and scan for a remote in pairing mode
 void remote_handshake_seen(void);  // the TV's own handshake reached the remote: skip our fallback
 // Tell the bridge which bonded peer is the remote ("AA:BB:CC:DD:EE:FF"); normally recorded when it pairs.

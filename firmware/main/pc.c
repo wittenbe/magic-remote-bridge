@@ -73,11 +73,11 @@ static float bias[3], grav[3];
 static bool grav_init;
 static float still_sum[3];
 static int still_n;
-static float acc_x, acc_y;
 static int64_t freeze_until;
 static int64_t last_activity;
 static bool sleep_sent;
 static bool tv_sleep_pending;
+static bool timing_log;
 
 static int find_key(uint16_t code)
 {
@@ -139,7 +139,7 @@ void pc_toggle(void)
 }
 
 // Roll-compensated gyro → cursor (same math as prototype/pc_mode.py).
-static void pointer(const int16_t g[3], const int16_t a[3], int64_t now, int *dx, int *dy)
+static void pointer(const int16_t g[3], const int16_t a[3], int64_t now, float *dx, float *dy)
 {
     *dx = *dy = 0;
     if (!grav_init) {
@@ -199,12 +199,8 @@ static void pointer(const int16_t g[3], const int16_t a[3], int64_t now, int *dx
     float steps = (rate - ACCEL_FROM_LSB) / ACCEL_SPAN_LSB;
     steps = steps < 0 ? 0 : steps > ACCEL_MAX_STEPS ? ACCEL_MAX_STEPS : steps;
     float k = settings.gain * (1.0f + settings.accel * steps);
-    acc_x += -yaw * k;
-    acc_y += -pitch * k;
-    *dx = (int)acc_x;
-    *dy = (int)acc_y;
-    acc_x -= *dx;
-    acc_y -= *dy;
+    *dx = -yaw * k;  // sub-pixel: usb.c keeps the remainder
+    *dy = -pitch * k;
 }
 
 void pc_on_fd(const uint8_t *d, uint16_t len)
@@ -289,20 +285,52 @@ void pc_on_fd(const uint8_t *d, uint16_t len)
         last_btn = btn;
     }
 
-    int dx, dy;
+    // Timing stats ("timing" on the console): report spacing as it arrives over BLE, lost reports (seq gaps),
+    // and how many USB motion reports went out, once per second while the remote moves.
+    static int64_t st_last, st_since;
+    static uint8_t st_seq;
+    static uint32_t st_n, st_lost, st_hist[5], st_max, st_usb0;
+    static bool st_moving;
+    if (st_last) {
+        uint32_t gap = (uint32_t)((now - st_last) / 1000);
+        st_hist[gap < 5 ? 0 : gap < 15 ? 1 : gap < 25 ? 2 : gap < 45 ? 3 : 4]++;
+        st_max = gap > st_max ? gap : st_max;
+        st_lost += (uint8_t)(r[1] - st_seq - 1);
+    }
+    st_last = now;
+    st_seq = r[1];
+    st_n++;
+    st_moving |= active;
+    if (now - st_since >= 1000000) {
+        if (st_moving && timing_log) {
+            ESP_LOGI(TAG, "timing: %lu reports, gaps <5ms %lu, 5-15 %lu, 15-25 %lu, 25-45 %lu, >45 %lu, max %lums, "
+                          "seq lost %lu, USB motion reports %lu",
+                     (unsigned long)st_n, (unsigned long)st_hist[0], (unsigned long)st_hist[1],
+                     (unsigned long)st_hist[2], (unsigned long)st_hist[3], (unsigned long)st_hist[4],
+                     (unsigned long)st_max, (unsigned long)st_lost, (unsigned long)(usb_mouse_reports - st_usb0));
+        }
+        st_n = st_lost = st_max = 0;
+        memset(st_hist, 0, sizeof(st_hist));
+        st_usb0 = usb_mouse_reports;
+        st_since = now;
+        st_moving = false;
+    }
+
+    float dx, dy;
     pointer(g, a, now, &dx, &dy);
     if (dx || dy || wheel) {
-        usb_mouse_move(dx, dy, wheel);
+        usb_mouse_motion(dx, dy, wheel);
     }
     // Debug summary (no screen on the dev box): motion per 0.5 s.
-    static int sum_x, sum_y, sum_w;
+    static float sum_x, sum_y;
+    static int sum_w;
     static int64_t sum_since;
     sum_x += dx;
     sum_y += dy;
     sum_w += wheel;
     if (now - sum_since > 500 * 1000) {
-        if (sum_x || sum_y || sum_w) {
-            ESP_LOGI(TAG, "USB motion dx=%+5d dy=%+5d wheel=%+d", sum_x, sum_y, sum_w);
+        if (fabsf(sum_x) >= 1 || fabsf(sum_y) >= 1 || sum_w) {
+            ESP_LOGI(TAG, "USB motion dx=%+5.0f dy=%+5.0f wheel=%+d", sum_x, sum_y, sum_w);
         }
         sum_x = sum_y = sum_w = 0;
         sum_since = now;
@@ -338,6 +366,12 @@ bool pc_tv_sleep_request(void)
     }
     tv_sleep_pending = true;
     return false;
+}
+
+void pc_toggle_timing_log(void)
+{
+    timing_log = !timing_log;
+    ESP_LOGI(TAG, "timing log %s", timing_log ? "on" : "off");
 }
 
 void pc_status(void)

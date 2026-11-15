@@ -21,3 +21,4 @@ void pc_toggle(void);
 // until the remote has been idle for settings.tv_sleep seconds.
 bool pc_tv_sleep_request(void);
 void pc_status(void);
+void pc_toggle_timing_log(void);  // per-second pointer timing stats on/off
