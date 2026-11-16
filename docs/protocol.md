@@ -125,6 +125,10 @@ own: the code repeats while the key is held and the TV measures the time.
 Pseudo-codes sent by the remote: **0x803E** "active" (after its central subscribes, and when waking),
 **0x803F** "idle" (after a sleep command, before it drops the link). Power has no BLE code.
 
+Between 0x803F and the next 0x803E the remote may keep sending FD reports (for key presses) with the **IMU off**:
+the gyro and accelerometer fields repeat their last values unchanged. A live gyro always shows ~1 LSB of noise,
+so identical readings over several reports mean frozen data, not a remote at rest.
+
 ## F9 command channel
 
 The central writes commands to **F9 Output** (Write Command); the remote answers on **F9 Input**. The first byte is

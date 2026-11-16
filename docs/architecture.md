@@ -70,7 +70,9 @@ drops the link and reconnects on the next key press (the bridge keeps an LE conn
 
 Gyro bias is re-estimated whenever the gyro readings stay within 10 LSB per axis for 1 s (resting, not hand-held:
 slow aiming must not be learned as bias). It is stored in NVS (at most once a minute, from its own task) and loaded
-at startup, so a reset doesn't leave the pointer drifting until the remote is put down. A soft dead zone (`dead`)
+at startup, so a reset doesn't leave the pointer drifting until the remote is put down. While the remote's IMU is off
+(idle code 0x803F, or 5 identical gyro readings in a row) the pointer stands still and nothing is learned: the
+frozen readings look like a remote at rest and were once learned as a bias 50 times too large. A soft dead zone (`dead`)
 absorbs what is left plus the slow rotation of a hand holding the remote "still". The rotation is projected onto the vertical
 (from the low-pass-filtered accelerometer) and onto the horizontal axis across the pointing direction, so the
 cursor moves correctly even when the remote is held tilted. Speed is `gain` px per gyro LSB per report; above

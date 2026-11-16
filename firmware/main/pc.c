@@ -65,6 +65,15 @@ static float still_sum[3];
 static int16_t still_min[3], still_max[3];
 static int still_n;
 static bool resting;
+// Between its idle (0x803F) and active (0x803E) codes the remote keeps sending reports but its gyro is off and the
+// last values repeat. Taken at face value they look like a remote at rest: they were learned as the bias (50x the
+// real one), and the cursor drifted hard once real data came back.
+static bool imu_off;
+static int16_t g_prev[3];
+static int g_changing, g_same;  // consecutive reports whose gyro reading differed from / equalled the previous one
+// A live gyro has ~1 LSB of noise on every axis, so 5 identical readings in a row don't happen at rest.
+#define IMU_LIVE_REPORTS 3
+#define IMU_FROZEN_REPORTS 5
 static int64_t freeze_until;
 static bool drag_lock;
 static float lock_x, lock_y;
@@ -167,6 +176,18 @@ static void track_rest(const int16_t g[3])
         still_sum[i] += g[i];
     }
     if (++still_n >= STILL_SAMPLES) {
+        // A gyro at rest still has ~1 LSB of noise: a window of identical readings is frozen data, not a bias.
+        bool frozen = true;
+        for (int i = 0; i < 3; i++) {
+            frozen &= still_max[i] == still_min[i];
+        }
+        if (frozen) {
+            for (int i = 0; i < 3; i++) {
+                still_sum[i] = 0;
+            }
+            still_n = 0;
+            return;
+        }
         float nb[3], change = 0;
         for (int i = 0; i < 3; i++) {
             nb[i] = still_sum[i] / still_n;
@@ -263,7 +284,9 @@ void pc_on_fd(const uint8_t *d, uint16_t len)
         }
         r[16] = r[17] = 0;
         btn = 0;
-    } else if (sw_down_at >= 0) {
+    } else if (sw_down_at >= 0 && btn != CONNECT_EVT && btn != IDLE_EVT) {
+        // The remote's status codes are not a release: it sends one (e.g. 0x803F) right in the middle of a held key,
+        // and taking that as a release made a held switch key switch back again.
         if (!sw_consumed) {
             if (mode == MODE_TV) {
                 sw_replay = SWITCH_REPLAY_FRAMES;
@@ -280,8 +303,26 @@ void pc_on_fd(const uint8_t *d, uint16_t len)
         a[i] = (int16_t)((r[10 + 2 * i] << 8) | r[11 + 2 * i]);
     }
     bool active = (btn && btn != CONNECT_EVT && btn != IDLE_EVT) || wheel || sw_down_at >= 0;
-    track_rest(g);
-    active |= !resting;
+    // The codes alone aren't enough (a lost report, live data for a moment after the idle code): the readings
+    // themselves decide too. Frozen readings never change; live ones always do.
+    bool changed = memcmp(g, g_prev, sizeof(g_prev)) != 0;
+    memcpy(g_prev, g, sizeof(g_prev));
+    g_changing = changed ? g_changing + 1 : 0;
+    g_same = changed ? 0 : g_same + 1;
+    bool off = imu_off;
+    if (btn == IDLE_EVT || g_same >= IMU_FROZEN_REPORTS) {
+        off = true;
+    } else if (btn == CONNECT_EVT || g_changing >= IMU_LIVE_REPORTS) {
+        off = false;
+    }
+    if (off != imu_off) {
+        imu_off = off;
+        ESP_LOGI(TAG, "remote gyro %s", imu_off ? "off (frozen readings)" : "on");
+    }
+    if (!imu_off) {
+        track_rest(g);
+        active |= !resting;
+    }
     if (active) {
         last_activity = now;
         sleep_sent = false;
@@ -366,7 +407,11 @@ void pc_on_fd(const uint8_t *d, uint16_t len)
     }
 
     float dx, dy;
-    pointer(g, a, now, &dx, &dy);
+    if (imu_off) {
+        dx = dy = 0;
+    } else {
+        pointer(g, a, now, &dx, &dy);
+    }
     if (drag_lock) {
         lock_x += dx;
         lock_y += dy;
