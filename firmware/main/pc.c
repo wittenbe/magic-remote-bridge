@@ -19,14 +19,21 @@ static const char *TAG = "pc";
 #define IDLE_EVT 0x803F
 #define LONG_PRESS_US (800 * 1000)
 #define RED_REPLAY_FRAMES 5
-#define MOTION_LSB 150  // gyro deviation that counts as activity (for the sleep timers)
 
 // Pointer tuning (base speed and acceleration strength are in settings)
 #define ACCEL_FROM_LSB 300.0f   // below this rotation rate (~18 °/s): base speed only
 #define ACCEL_SPAN_LSB 700.0f   // each further 700 LSB (~41 °/s) adds `accel` × base speed
 #define ACCEL_MAX_STEPS 4.0f    // capped at 1 + 4 × accel
-#define STILL_LSB 40
-#define STILL_SAMPLES 50
+// Gyro bias: re-estimated when the readings stay within STILL_SPREAD_LSB (per axis) for STILL_SAMPLES reports.
+// At rest the noise is ~1 LSB; a hand-held remote varies far more. The old test ("within 40 LSB of the current
+// bias for 0.5 s") also matched slow aiming movements (< 2.4 °/s), learned them as bias, and the cursor then
+// drifted the other way.
+#define STILL_SPREAD_LSB 10
+#define STILL_SAMPLES 100
+// Activity for the sleep timers = not resting for REST_SAMPLES reports. The old test (gyro > 150 LSB, ~9 °/s)
+// counted holding the remote steady while aiming as idle, so the remote was put to sleep in the user's hand and
+// the cursor froze until a key press woke it.
+#define REST_SAMPLES 50
 #define ACC_ALPHA 0.05f
 #define CLICK_FREEZE_US (150 * 1000)
 
@@ -72,7 +79,9 @@ static uint8_t last_report[19];
 static float bias[3], grav[3];
 static bool grav_init;
 static float still_sum[3];
+static int16_t still_min[3], still_max[3];
 static int still_n;
+static bool resting;
 static int64_t freeze_until;
 static int64_t last_activity;
 static bool sleep_sent;
@@ -138,6 +147,45 @@ void pc_toggle(void)
     sleep_sent = false;
 }
 
+// Tracks whether the remote is resting (readings within STILL_SPREAD_LSB) and re-estimates the gyro bias after
+// STILL_SAMPLES resting reports. Runs in both modes, before the activity check.
+static void track_rest(const int16_t g[3])
+{
+    bool still = true;
+    for (int i = 0; i < 3; i++) {
+        int16_t lo = still_n ? (g[i] < still_min[i] ? g[i] : still_min[i]) : g[i];
+        int16_t hi = still_n ? (g[i] > still_max[i] ? g[i] : still_max[i]) : g[i];
+        still &= hi - lo <= STILL_SPREAD_LSB;
+        still_min[i] = lo;
+        still_max[i] = hi;
+    }
+    resting = still && (resting || still_n + 1 >= REST_SAMPLES);
+    if (!still) {
+        // start a new window with this sample
+        for (int i = 0; i < 3; i++) {
+            still_min[i] = still_max[i] = g[i];
+            still_sum[i] = 0;
+        }
+        still_n = 0;
+    }
+    for (int i = 0; i < 3; i++) {
+        still_sum[i] += g[i];
+    }
+    if (++still_n >= STILL_SAMPLES) {
+        float nb[3], change = 0;
+        for (int i = 0; i < 3; i++) {
+            nb[i] = still_sum[i] / still_n;
+            change = fmaxf(change, fabsf(nb[i] - bias[i]));
+            bias[i] = nb[i];
+            still_sum[i] = 0;
+        }
+        still_n = 0;
+        if (change >= 1.0f) {
+            ESP_LOGI(TAG, "gyro bias %.1f/%.1f/%.1f (moved %.1f)", bias[0], bias[1], bias[2], change);
+        }
+    }
+}
+
 // Roll-compensated gyro → cursor (same math as prototype/pc_mode.py).
 static void pointer(const int16_t g[3], const int16_t a[3], int64_t now, float *dx, float *dy)
 {
@@ -150,26 +198,6 @@ static void pointer(const int16_t g[3], const int16_t a[3], int64_t now, float *
     }
     for (int i = 0; i < 3; i++) {
         grav[i] += ACC_ALPHA * (a[i] - grav[i]);
-    }
-
-    bool still = true;
-    for (int i = 0; i < 3; i++) {
-        still &= fabsf(g[i] - bias[i]) < STILL_LSB;
-    }
-    if (still) {
-        for (int i = 0; i < 3; i++) {
-            still_sum[i] += g[i];
-        }
-        if (++still_n >= STILL_SAMPLES) {
-            for (int i = 0; i < 3; i++) {
-                bias[i] = still_sum[i] / still_n;
-                still_sum[i] = 0;
-            }
-            still_n = 0;
-        }
-    } else {
-        memset(still_sum, 0, sizeof(still_sum));
-        still_n = 0;
     }
 
     float w[3] = {g[0] - bias[0], g[1] - bias[1], g[2] - bias[2]};
@@ -196,6 +224,15 @@ static void pointer(const int16_t g[3], const int16_t a[3], int64_t now, float *
     }
     // Acceleration: precise when moving slowly, fast flicks travel further.
     float rate = sqrtf(yaw * yaw + pitch * pitch);
+    // Soft dead zone (`dead` setting): a hand never holds the remote perfectly still, and at higher gains that slow
+    // rotation shows as the cursor creeping. Subtracting instead of cutting keeps slow aiming continuous.
+    float dead = settings.dead;
+    if (rate <= dead) {
+        return;
+    }
+    yaw *= (rate - dead) / rate;
+    pitch *= (rate - dead) / rate;
+    rate -= dead;
     float steps = (rate - ACCEL_FROM_LSB) / ACCEL_SPAN_LSB;
     steps = steps < 0 ? 0 : steps > ACCEL_MAX_STEPS ? ACCEL_MAX_STEPS : steps;
     float k = settings.gain * (1.0f + settings.accel * steps);
@@ -240,9 +277,8 @@ void pc_on_fd(const uint8_t *d, uint16_t len)
         a[i] = (int16_t)((r[10 + 2 * i] << 8) | r[11 + 2 * i]);
     }
     bool active = (btn && btn != CONNECT_EVT && btn != IDLE_EVT) || wheel || red_down_at >= 0;
-    for (int i = 0; i < 3; i++) {
-        active |= fabsf(g[i] - bias[i]) > MOTION_LSB;
-    }
+    track_rest(g);
+    active |= !resting;
     if (active) {
         last_activity = now;
         sleep_sent = false;

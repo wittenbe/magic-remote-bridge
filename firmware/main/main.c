@@ -149,7 +149,7 @@ static void on_line(const char *line)
         }
     } else if (sscanf(line, "set %15s %f", name, &f) == 2) {
         if (settings_set(name, f)) {
-            ESP_LOGW(TAG, "unknown setting %s (gain | accel | tvsleep | pcsleep | smooth)", name);
+            ESP_LOGW(TAG, "unknown setting %s (gain | accel | tvsleep | pcsleep | smooth | dead)", name);
         }
     } else if (!strcmp(line, "settings")) {
         settings_print();
@@ -172,7 +172,7 @@ static void on_line(const char *line)
     } else if (sscanf(line, "move %i %i %i", &a, &b, &c) >= 2) {
         usb_mouse_move(a, b, c);
     } else {
-        ESP_LOGW(TAG, "commands: status | settings | set <gain|accel|tvsleep|pcsleep|smooth> <value> | mode | timing | forget | "
+        ESP_LOGW(TAG, "commands: status | settings | set <gain|accel|tvsleep|pcsleep|smooth|dead> <value> | mode | timing | forget | "
                       "setremote <addr> | link <itvl_min> <itvl_max> <latency> | dl | key <usage> | move <dx> <dy> [wheel]");
     }
 }

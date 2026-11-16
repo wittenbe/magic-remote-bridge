@@ -46,7 +46,8 @@ Stored on the board, changed with `set <name> <value>` on the console (see below
 | `gain` | 0.016 | pointer base speed (px per gyro unit per report; ~0.016 ≈ 27 px per degree) |
 | `accel` | 1.0 | pointer acceleration: fast movements up to 1 + 4·accel times faster; 0 = off |
 | `tvsleep` | 0 | TV mode: seconds of idle before the TV's sleep command reaches the remote; 0 = immediately, like without the bridge |
-| `pcsleep` | 10 | PC mode: seconds of idle before the bridge puts the remote to sleep; 0 = never (drains the battery) |
+| `pcsleep` | 10 | PC mode: seconds the remote has to lie still (put down, not hand-held) before the bridge puts it to sleep; 0 = never (drains the battery) |
+| `dead` | 12 | PC mode: dead zone for very slow rotation, in gyro units (~17 per °/s); stops the cursor creeping while the remote is held still. Subtracted from all speeds, so slow aiming stays continuous |
 | `smooth` | 15 | PC mode: each pointer report's motion is spread over this many ms at the 1 kHz USB rate; 0 = send at once (choppier, 10 ms less latency) |
 
 A sleeping remote wakes on any key press; the first press is delivered.

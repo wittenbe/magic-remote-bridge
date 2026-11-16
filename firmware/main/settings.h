@@ -8,6 +8,7 @@ typedef struct {
     uint32_t tv_sleep;  // TV mode: hold back the TV's sleep command until idle this many s (0 = pass it on)
     uint32_t pc_sleep;  // PC mode: send the sleep command after this many s idle (0 = never)
     uint32_t smooth;    // PC mode: spread each report's pointer motion over this many ms (0 = send at once)
+    float dead;         // PC mode: soft dead zone on the rotation rate, gyro LSB (~16.9 per °/s)
                         // New fields go at the end: settings_load() keeps defaults for fields an older blob lacks.
 } settings_t;
 

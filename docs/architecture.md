@@ -62,11 +62,14 @@ drops the link and reconnects on the next key press (the bridge keeps an LE conn
 
 - TV mode: the TV's `02` is forwarded immediately, or held back until the remote has been idle for `tvsleep`
   seconds (any activity cancels it; the TV asks again later).
-- PC mode: TV commands are blocked, so the bridge sends `02` itself after `pcsleep` seconds of idle.
+- PC mode: TV commands are blocked, so the bridge sends `02` itself after `pcsleep` seconds of idle. Idle means
+  resting (gyro readings within 10 LSB), not just slow: a remote held steady while aiming must not fall asleep.
 
 ## Pointer (PC mode)
 
-Gyro bias is re-estimated whenever the remote is still for 0.5 s. The rotation is projected onto the vertical
+Gyro bias is re-estimated whenever the gyro readings stay within 10 LSB per axis for 1 s (resting, not hand-held:
+slow aiming must not be learned as bias), and a soft dead zone (`dead`)
+absorbs what is left plus the slow rotation of a hand holding the remote "still". The rotation is projected onto the vertical
 (from the low-pass-filtered accelerometer) and onto the horizontal axis across the pointing direction, so the
 cursor moves correctly even when the remote is held tilted. Speed is `gain` px per gyro LSB per report; above
 ~18 °/s the factor grows with the rotation rate (`accel`), up to 1 + 4·accel. The pointer freezes for 150 ms
