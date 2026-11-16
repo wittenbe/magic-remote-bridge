@@ -47,6 +47,8 @@ WebSerial, so it needs **Chrome or Edge** on the PC the bridge is plugged into. 
 needed), click **Connect** and pick the bridge. Close `console.py` first: on Windows only one program can open
 the port.
 
+![Configuration page](img/config-page.png)
+
 - Click a button on the drawing, or press it on the remote, to edit it: nothing, a key (with Ctrl/Shift/Alt/Win,
   e.g. Win + H for dictation), a media key or a mouse button. **Record from keyboard** takes a key or shortcut
   pressed on the PC keyboard; combinations Windows keeps for itself (Alt+Tab, Ctrl+Alt+Del) are picked from the

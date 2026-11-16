@@ -13,6 +13,8 @@ Magic Remote ◄──BLE──► ESP32-S3 ◄──BLE──► LG TV
                            └──USB──► PC (keyboard, mouse, media keys)
 ```
 
+![Configuration page: the remote, the selected button's mapping, pointer settings and the full key map](docs/img/config-page.png)
+
 ## Status
 
 Working with an MR25GB and a 2025 LG OLED (webOS): TV relay including pointer, PC mode on Windows (gyro pointer,
