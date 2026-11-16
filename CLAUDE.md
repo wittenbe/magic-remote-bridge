@@ -28,9 +28,12 @@ Start with [README.md](README.md) and [docs/](docs/); [docs/protocol.md](docs/pr
 ## Firmware conventions
 
 - ESP-IDF v5.4.x, NimBLE, esp_tinyusb 1.x. Modules: `remote.c` (central), `tv.c` (peripheral), `pc.c` (modes,
-  PC input), `usb.c`, `settings.c` (NVS), glue in `main.c`. Keep the comment style: explain *why*, not *what*.
+  PC input), `keymap.c` + `settings.c` (NVS), `usb.c`, glue in `main.c`. Keep the comment style: explain *why*, not *what*.
 - Keep NimBLE logging at WARNING; INFO over the USB console slows the BLE host enough to drop reports.
 - Code that runs per report (100 Hz) must not block (`pc_on_fd`, notify paths).
+- The console drops output that doesn't fit its 512-byte TX buffer. Commands that print many lines call
+  `usb_console_drain()` between lines (see `keymap_print`). `tools/config.html` parses the console output
+  (`settings:`, `keymap:`, `FD btn=`, `MODE →`), so keep those formats when changing log lines.
 
 ## Open items
 
@@ -39,7 +42,5 @@ Start with [README.md](README.md) and [docs/](docs/); [docs/protocol.md](docs/pr
   connection events next to the TV link) could be hidden with a ~40 ms jitter buffer, at the cost of latency.
 - Why the controller rejects connection intervals below 13.75 ms is unknown (maybe multi-connection scheduling);
   accepting the remote's own update request in `BLE_GAP_EVENT_L2CAP_UPDATE_REQ` rebooted the bridge.
-- Configuration page: WebSerial (Chrome/Edge) on top of the console commands: key map, mode-switch key + hold time,
-  pointer settings. Key map and switch key are still compiled in (`KEYMAP`, `RED` in `pc.c`) and would move to NVS.
 - Advertising flags: 0x06 works; the real remote uses 0x05, never confirmed with the bridge.
 - FE report (probably microphone audio) is unexplored.

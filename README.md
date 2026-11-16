@@ -19,7 +19,7 @@ Working with an MR25GB and a 2025 LG OLED (webOS): TV relay including pointer, P
 ## Documentation
 
 - [Setup](docs/setup.md): hardware, ESP-IDF, building and flashing
-- [Usage](docs/usage.md): pairing, switching modes, key map, settings, console commands
+- [Usage](docs/usage.md): pairing, switching modes, key map, configuration page, settings, console commands
 - [Architecture](docs/architecture.md): how the bridge works
 - [Protocol](docs/protocol.md): the MR25GB's BLE protocol (GATT, reports, IMU, command channel) and how the TV pairs
 - [Troubleshooting](docs/troubleshooting.md)
@@ -31,6 +31,7 @@ Working with an MR25GB and a 2025 LG OLED (webOS): TV relay including pointer, P
 | `firmware/` | ESP-IDF project (ESP32-S3) |
 | `tools/flash.py` | build and flash without pressing buttons |
 | `tools/console.py` | the bridge's serial console (log + commands) |
+| `tools/config.html` | configuration page (key map, settings) for Chrome/Edge, over WebSerial |
 | `prototype/` | earlier Linux/BlueZ implementation, kept for reference |
 
 ## Planned

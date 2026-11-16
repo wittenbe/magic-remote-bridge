@@ -33,8 +33,9 @@ replayed to the TV on release, so red keeps its TV function. On entering PC mode
 | `main.c` | startup, glue between the modules, console commands, queue for TV writes |
 | `remote.c` | central: scan for a remote in pairing mode, pair, remember its address, subscribe to F9/FD/FE, fallback initialisation, keep a connect pending while the remote sleeps, detect lost keys |
 | `tv.c` | peripheral: GATT copy of the remote, advertising, Security Request, MTU exchange, accepts re-pairing |
-| `pc.c` | mode switch, red-key handling, PC mode (key map, roll-compensated pointer with acceleration), idle sleep |
-| `usb.c` | TinyUSB composite device: CDC console + HID (keyboard, mouse, consumer control); reboot into download mode |
+| `pc.c` | mode switch, switch-key handling, PC mode (key output, roll-compensated pointer with acceleration), idle sleep |
+| `keymap.c` | PC-mode key map (button code → key / media key / mouse button) in NVS |
+| `usb.c` | TinyUSB composite device: CDC console + HID (keyboard, mouse, consumer control); console command task; reboot into download mode |
 | `settings.c` | user settings in NVS |
 
 Stack: ESP-IDF 5.4, NimBLE (dual role, bonds and CCCDs persisted in NVS), esp_tinyusb.
@@ -68,7 +69,8 @@ drops the link and reconnects on the next key press (the bridge keeps an LE conn
 ## Pointer (PC mode)
 
 Gyro bias is re-estimated whenever the gyro readings stay within 10 LSB per axis for 1 s (resting, not hand-held:
-slow aiming must not be learned as bias), and a soft dead zone (`dead`)
+slow aiming must not be learned as bias). It is stored in NVS (at most once a minute, from its own task) and loaded
+at startup, so a reset doesn't leave the pointer drifting until the remote is put down. A soft dead zone (`dead`)
 absorbs what is left plus the slow rotation of a hand holding the remote "still". The rotation is projected onto the vertical
 (from the low-pass-filtered accelerometer) and onto the horizontal axis across the pointing direction, so the
 cursor moves correctly even when the remote is held tilted. Speed is `gain` px per gyro LSB per report; above

@@ -10,6 +10,8 @@ typedef struct {
     uint32_t smooth;    // PC mode: spread each report's pointer motion over this many ms (0 = send at once)
     float dead;         // PC mode: soft dead zone on the rotation rate, gyro LSB (~16.9 per °/s)
     float drag;         // PC mode: px the pointer must travel with a mouse button held before it moves (0 = off)
+    uint32_t switch_key;   // button code that switches TV/PC mode when held
+    uint32_t switch_hold;  // ms the switch key must be held; 0 = switch on press (key has no other use)
                         // New fields go at the end: settings_load() keeps defaults for fields an older blob lacks.
 } settings_t;
 

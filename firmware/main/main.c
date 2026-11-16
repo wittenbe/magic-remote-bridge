@@ -15,6 +15,7 @@
 #include "store/config/ble_store_config.h"
 #include "pc.h"
 #include "remote.h"
+#include "keymap.h"
 #include "settings.h"
 #include "tv.h"
 #include "usb.h"
@@ -136,9 +137,8 @@ static void pc_to_remote(const uint8_t *d, uint16_t len)
 
 static void on_line(const char *line)
 {
-    int a = 0, b = 0, c = 0;
-    float f = 0;
-    char name[24];
+    int a = 0, b = 0, c = 0, d = 0;
+    char name[24], val[24];
     if (!strcmp(line, "dl")) {
         usb_reboot_to_download();
     } else if (!strcmp(line, "mode")) {
@@ -147,10 +147,32 @@ static void on_line(const char *line)
         if (remote_set_addr(name)) {
             ESP_LOGW(TAG, "usage: setremote AA:BB:CC:DD:EE:FF");
         }
-    } else if (sscanf(line, "set %15s %f", name, &f) == 2) {
+    } else if (sscanf(line, "set %15s %23s", name, val) == 2) {
+        // hex for button codes (set switchkey 0x8072)
+        float f = strncmp(val, "0x", 2) ? strtof(val, NULL) : (float)strtol(val, NULL, 16);
         if (settings_set(name, f)) {
-            ESP_LOGW(TAG, "unknown setting %s (gain | accel | tvsleep | pcsleep | smooth | dead | drag)", name);
+            ESP_LOGW(TAG, "unknown setting %s (gain | accel | tvsleep | pcsleep | smooth | dead | drag | switchkey | switchhold)", name);
         }
+    } else if (!strcmp(line, "keymap")) {
+        keymap_print();
+    } else if (!strcmp(line, "keymap reset")) {
+        keymap_reset();
+        keymap_print();
+    } else if (sscanf(line, "map %i %15s %i %i", &a, name, &b, &d) >= 3) {
+        keymap_entry_t e = {.code = a, .usage = b, .mods = d};
+        e.type = !strcmp(name, "key") ? OUT_KEY : !strcmp(name, "consumer") ? OUT_CONSUMER
+               : !strcmp(name, "mouse") ? OUT_MOUSE : OUT_NONE;
+        if (e.type == OUT_NONE) {
+            ESP_LOGW(TAG, "usage: map <code> key|consumer|mouse <usage> [modifiers]");
+        } else if (keymap_set(&e)) {
+            ESP_LOGW(TAG, "key map full (%d entries)", KEYMAP_MAX);
+        } else {
+            keymap_print_entry(&e);
+        }
+    } else if (sscanf(line, "unmap %i", &a) == 1) {
+        keymap_entry_t e = {.code = a, .type = OUT_NONE};
+        keymap_set(&e);
+        keymap_print_entry(&e);
     } else if (!strcmp(line, "settings")) {
         settings_print();
     } else if (!strcmp(line, "status")) {
@@ -172,7 +194,8 @@ static void on_line(const char *line)
     } else if (sscanf(line, "move %i %i %i", &a, &b, &c) >= 2) {
         usb_mouse_move(a, b, c);
     } else {
-        ESP_LOGW(TAG, "commands: status | settings | set <gain|accel|tvsleep|pcsleep|smooth|dead|drag> <value> | mode | timing | forget | "
+        ESP_LOGW(TAG, "commands: status | settings | set <name> <value> | keymap [reset] | map <code> key|consumer|mouse <usage> [mods] | "
+                      "unmap <code> | mode | timing | forget | "
                       "setremote <addr> | link <itvl_min> <itvl_max> <latency> | dl | key <usage> | move <dx> <dy> [wheel]");
     }
 }
@@ -214,6 +237,7 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(err);
     settings_load();
+    keymap_load();
     settings_print();
     ESP_ERROR_CHECK(nimble_port_init());
 

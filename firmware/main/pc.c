@@ -4,7 +4,11 @@
 #include <string.h>
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "nvs.h"
 #include "class/hid/hid.h"
+#include "keymap.h"
 #include "settings.h"
 #include "usb.h"
 
@@ -14,11 +18,9 @@ static const char *TAG = "pc";
 // [16:18] button (u16 BE), [18] wheel (int8). Gyro and accel share one frame (checked against each other),
 // gyro ≈16.9 LSB per °/s. "Up" is +accel (specific force), see pointer().
 
-#define RED 0x8072
 #define CONNECT_EVT 0x803E
 #define IDLE_EVT 0x803F
-#define LONG_PRESS_US (800 * 1000)
-#define RED_REPLAY_FRAMES 5
+#define SWITCH_REPLAY_FRAMES 5
 
 // Pointer tuning (base speed and acceleration strength are in settings)
 #define ACCEL_FROM_LSB 300.0f   // below this rotation rate (~18 °/s): base speed only
@@ -37,44 +39,27 @@ static const char *TAG = "pc";
 #define ACC_ALPHA 0.05f
 #define CLICK_FREEZE_US (150 * 1000)
 
-enum { OUT_KEY, OUT_CONSUMER, OUT_MOUSE };
-static const struct {
-    uint16_t code;
-    uint8_t type;
-    uint16_t usage;  // keyboard usage / consumer usage / mouse button bit
-} KEYMAP[] = {
-    {0x8040, OUT_KEY, HID_KEY_ARROW_UP},
-    {0x8041, OUT_KEY, HID_KEY_ARROW_DOWN},
-    {0x8007, OUT_KEY, HID_KEY_ARROW_LEFT},
-    {0x8006, OUT_KEY, HID_KEY_ARROW_RIGHT},
-    {0x8044, OUT_MOUSE, MOUSE_BUTTON_LEFT},       // OK / wheel click
-    {0x8043, OUT_MOUSE, MOUSE_BUTTON_RIGHT},      // Settings
-    {0x8028, OUT_KEY, HID_KEY_ESCAPE},            // Back
-    {0x807C, OUT_KEY, HID_KEY_GUI_LEFT},          // Home → Start menu
-    {0x8002, OUT_CONSUMER, HID_USAGE_CONSUMER_VOLUME_INCREMENT},
-    {0x8003, OUT_CONSUMER, HID_USAGE_CONSUMER_VOLUME_DECREMENT},
-    {0x8009, OUT_CONSUMER, HID_USAGE_CONSUMER_MUTE},
-    {0x8000, OUT_KEY, HID_KEY_PAGE_UP},           // Ch+
-    {0x8001, OUT_KEY, HID_KEY_PAGE_DOWN},         // Ch-
-    {0x8071, OUT_KEY, HID_KEY_F2},                // Green
-    {0x8063, OUT_KEY, HID_KEY_F3},                // Yellow
-    {0x8061, OUT_KEY, HID_KEY_F4},                // Blue
-    {0x8010, OUT_KEY, HID_KEY_0}, {0x8011, OUT_KEY, HID_KEY_1}, {0x8012, OUT_KEY, HID_KEY_2},
-    {0x8013, OUT_KEY, HID_KEY_3}, {0x8014, OUT_KEY, HID_KEY_4}, {0x8015, OUT_KEY, HID_KEY_5},
-    {0x8016, OUT_KEY, HID_KEY_6}, {0x8017, OUT_KEY, HID_KEY_7}, {0x8018, OUT_KEY, HID_KEY_8},
-    {0x8019, OUT_KEY, HID_KEY_9},
-};
-
 static pc_io_t io;
 static bridge_mode_t mode = MODE_TV;
-static int64_t red_down_at = -1;
-static bool red_consumed;
-static int red_replay;
+// Switch key: held back in both modes; a long press toggles the mode, a short one is replayed to the TV (TV mode)
+// or sent as its mapping (PC mode).
+static int64_t sw_down_at = -1;
+static uint16_t sw_code;
+static bool sw_consumed;
+static int sw_replay;
 static uint16_t last_btn;
+// What the held button sent: the release must match the press even if the map was edited in between.
+static keymap_entry_t held;
 static uint8_t mouse_buttons;
 static uint8_t last_report[19];
 
 static float bias[3], grav[3];
+// The bias is kept in NVS: it is only learned while the remote lies still, and starting from 0 after every reset
+// made the cursor drift hard until the remote was put down once.
+#define BIAS_SAVE_PERIOD_MS (60 * 1000)
+#define BIAS_SAVE_MIN_CHANGE 2.0f
+static float bias_saved[3];
+static bool bias_learned, bias_stored;  // learned since boot / a value is in NVS
 static bool grav_init;
 static float still_sum[3];
 static int16_t still_min[3], still_max[3];
@@ -88,39 +73,51 @@ static bool sleep_sent;
 static bool tv_sleep_pending;
 static bool timing_log;
 
-static int find_key(uint16_t code)
+static void send(const keymap_entry_t *e, bool down)
 {
-    for (size_t i = 0; i < sizeof(KEYMAP) / sizeof(KEYMAP[0]); i++) {
-        if (KEYMAP[i].code == code) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-static void output(uint16_t code, bool down)
-{
-    int i = find_key(code);
-    if (i < 0) {
-        if (down) {
-            ESP_LOGI(TAG, "unmapped button 0x%04x", code);
-        }
-        return;
-    }
-    ESP_LOGI(TAG, "USB %s 0x%04x %s", KEYMAP[i].type == OUT_KEY ? "key" : KEYMAP[i].type == OUT_CONSUMER ? "consumer" : "mouse",
-             KEYMAP[i].usage, down ? "down" : "up");
-    switch (KEYMAP[i].type) {
+    ESP_LOGI(TAG, "USB %s 0x%02x+0x%02x %s", e->type == OUT_KEY ? "key" : e->type == OUT_CONSUMER ? "consumer" : "mouse",
+             e->usage, e->mods, down ? "down" : "up");
+    switch (e->type) {
     case OUT_KEY:
-        usb_key(KEYMAP[i].usage, down);
+        // Modifiers go down before the key and up after it, as when typed.
+        if (!down && e->usage) {
+            usb_key(e->usage, false);
+        }
+        for (int b = 0; b < 8; b++) {
+            if (e->mods & (1 << b)) {
+                usb_key(HID_KEY_CONTROL_LEFT + b, down);
+            }
+        }
+        if (down && e->usage) {
+            usb_key(e->usage, true);
+        }
         break;
     case OUT_CONSUMER:
-        usb_consumer(KEYMAP[i].usage, down);
+        usb_consumer(e->usage, down);
         break;
     case OUT_MOUSE:
-        mouse_buttons = down ? (mouse_buttons | KEYMAP[i].usage) : (mouse_buttons & ~KEYMAP[i].usage);
+        mouse_buttons = down ? (mouse_buttons | e->usage) : (mouse_buttons & ~e->usage);
         usb_mouse_buttons(mouse_buttons);
         break;
     }
+}
+
+static void press(uint16_t code)
+{
+    if (!keymap_find(code, &held)) {
+        held.type = OUT_NONE;
+        ESP_LOGI(TAG, "unmapped button 0x%04x", code);
+        return;
+    }
+    send(&held, true);
+}
+
+static void release(void)
+{
+    if (held.type != OUT_NONE) {
+        send(&held, false);
+    }
+    held.type = OUT_NONE;
 }
 
 static void send_event_to_tv(uint16_t evt)
@@ -135,9 +132,7 @@ static void send_event_to_tv(uint16_t evt)
 
 void pc_toggle(void)
 {
-    if (last_btn && last_btn != RED) {
-        output(last_btn, false);  // release whatever is held
-    }
+    release();  // whatever is held
     last_btn = 0;
     mode = mode == MODE_TV ? MODE_PC : MODE_TV;
     ESP_LOGI(TAG, "MODE → %s", mode == MODE_PC ? "PC" : "TV");
@@ -179,6 +174,7 @@ static void track_rest(const int16_t g[3])
             bias[i] = nb[i];
             still_sum[i] = 0;
         }
+        bias_learned = true;
         still_n = 0;
         if (change >= 1.0f) {
             ESP_LOGI(TAG, "gyro bias %.1f/%.1f/%.1f (moved %.1f)", bias[0], bias[1], bias[2], change);
@@ -253,22 +249,29 @@ void pc_on_fd(const uint8_t *d, uint16_t len)
     uint16_t btn = (r[16] << 8) | r[17];
     int8_t wheel = (int8_t)r[18];
 
-    // Red: held back in both modes. Long press toggles; a short press is replayed to the TV in TV mode.
-    if (btn == RED) {
-        if (red_down_at < 0) {
-            red_down_at = now;
-            red_consumed = false;
-        } else if (!red_consumed && now - red_down_at >= LONG_PRESS_US) {
-            red_consumed = true;
+    bool sw_tap = false;
+    if (btn && btn == settings.switch_key) {
+        if (sw_down_at < 0) {
+            sw_down_at = now;
+            sw_code = btn;
+            sw_consumed = false;
+        }
+        // switchhold 0: switch on the press itself; the key then has no other function
+        if (!sw_consumed && now - sw_down_at >= (int64_t)settings.switch_hold * 1000) {
+            sw_consumed = true;
             pc_toggle();
         }
         r[16] = r[17] = 0;
         btn = 0;
-    } else if (red_down_at >= 0) {
-        if (!red_consumed && mode == MODE_TV) {
-            red_replay = RED_REPLAY_FRAMES;
+    } else if (sw_down_at >= 0) {
+        if (!sw_consumed) {
+            if (mode == MODE_TV) {
+                sw_replay = SWITCH_REPLAY_FRAMES;
+            } else {
+                sw_tap = true;
+            }
         }
-        red_down_at = -1;
+        sw_down_at = -1;
     }
 
     int16_t g[3], a[3];
@@ -276,7 +279,7 @@ void pc_on_fd(const uint8_t *d, uint16_t len)
         g[i] = (int16_t)((r[4 + 2 * i] << 8) | r[5 + 2 * i]);
         a[i] = (int16_t)((r[10 + 2 * i] << 8) | r[11 + 2 * i]);
     }
-    bool active = (btn && btn != CONNECT_EVT && btn != IDLE_EVT) || wheel || red_down_at >= 0;
+    bool active = (btn && btn != CONNECT_EVT && btn != IDLE_EVT) || wheel || sw_down_at >= 0;
     track_rest(g);
     active |= !resting;
     if (active) {
@@ -293,10 +296,10 @@ void pc_on_fd(const uint8_t *d, uint16_t len)
             tv_sleep_pending = false;
             ESP_LOGI(TAG, "TV mode: idle %lus, forwarded the TV's sleep command", (unsigned long)settings.tv_sleep);
         }
-        if (red_replay && btn == 0) {
-            red_replay--;
-            r[16] = RED >> 8;
-            r[17] = RED & 0xff;
+        if (sw_replay && btn == 0) {
+            sw_replay--;
+            r[16] = sw_code >> 8;
+            r[17] = sw_code & 0xff;
         }
         last_btn = btn;
         io.to_tv(r, sizeof(r));
@@ -307,20 +310,21 @@ void pc_on_fd(const uint8_t *d, uint16_t len)
     if (btn == CONNECT_EVT || btn == IDLE_EVT) {
         btn = last_btn;
     }
+    if (sw_tap) {
+        press(sw_code);
+        release();
+    }
     if (btn != last_btn) {
-        if (last_btn) {
-            output(last_btn, false);
-        }
+        bool was_down = held.type == OUT_MOUSE;
+        release();
         if (btn) {
-            output(btn, true);
+            press(btn);
         }
-        int li = find_key(last_btn), bi = find_key(btn);
-        if ((li >= 0 && KEYMAP[li].type == OUT_MOUSE) || (bi >= 0 && KEYMAP[bi].type == OUT_MOUSE)) {
+        if (was_down || held.type == OUT_MOUSE) {
             freeze_until = now + CLICK_FREEZE_US;
         }
         // A click must not turn into a drag: the hand moves a little while pressing (after the freeze above, and
         // during a slower click). With a mouse button down, the pointer stays put until it has travelled `drag` px.
-        bool was_down = li >= 0 && KEYMAP[li].type == OUT_MOUSE;
         if (mouse_buttons && !was_down) {
             drag_lock = settings.drag > 0;
             lock_x = lock_y = 0;
@@ -401,10 +405,47 @@ void pc_on_fd(const uint8_t *d, uint16_t len)
     }
 }
 
+// Saves the bias from its own task: an NVS write takes milliseconds and must not happen in the report path.
+// Small changes (temperature) are not worth a flash write.
+static void bias_save_task(void *arg)
+{
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(BIAS_SAVE_PERIOD_MS));
+        float b[3], change = 0;
+        for (int i = 0; i < 3; i++) {
+            b[i] = bias[i];
+            change = fmaxf(change, fabsf(b[i] - bias_saved[i]));
+        }
+        if (!bias_learned || (bias_stored && change < BIAS_SAVE_MIN_CHANGE)) {
+            continue;
+        }
+        nvs_handle_t h;
+        if (nvs_open("mrb", NVS_READWRITE, &h) == ESP_OK) {
+            nvs_set_blob(h, "bias", b, sizeof(b));
+            nvs_commit(h);
+            nvs_close(h);
+            memcpy(bias_saved, b, sizeof(b));
+            bias_stored = true;
+            ESP_LOGI(TAG, "gyro bias saved");
+        }
+    }
+}
+
 void pc_init(const pc_io_t *i)
 {
     io = *i;
     last_activity = esp_timer_get_time();
+    nvs_handle_t h;
+    if (nvs_open("mrb", NVS_READONLY, &h) == ESP_OK) {
+        size_t len = sizeof(bias);
+        if (nvs_get_blob(h, "bias", bias, &len) == ESP_OK && len == sizeof(bias)) {
+            memcpy(bias_saved, bias, sizeof(bias));
+            bias_stored = true;
+            ESP_LOGI(TAG, "gyro bias %.1f/%.1f/%.1f (stored)", bias[0], bias[1], bias[2]);
+        }
+        nvs_close(h);
+    }
+    xTaskCreate(bias_save_task, "bias", 2560, NULL, 1, NULL);
 }
 
 bridge_mode_t pc_mode(void)

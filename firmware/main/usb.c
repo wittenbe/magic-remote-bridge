@@ -65,9 +65,30 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
 
 /* ---- CDC line input ---- */
 
+// Commands run in their own task, not in this receive callback: it runs in the TinyUSB task, which can't send
+// while a command prints, and the console drops whatever doesn't fit the 512-byte TX buffer.
+#define CONSOLE_LINE_MAX 128
 static usb_line_cb_t line_cb;
-static char line_buf[128];
+static QueueHandle_t line_queue;
+static char line_buf[CONSOLE_LINE_MAX];
 static size_t line_len;
+
+static void console_task(void *arg)
+{
+    char line[CONSOLE_LINE_MAX];
+    for (;;) {
+        if (xQueueReceive(line_queue, line, portMAX_DELAY) == pdTRUE && line_cb) {
+            line_cb(line);
+        }
+    }
+}
+
+void usb_console_drain(void)
+{
+    if (tud_cdc_n_connected(TINYUSB_CDC_ACM_0)) {  // nobody listening: nothing drains, don't wait (or warn)
+        tinyusb_cdcacm_write_flush(TINYUSB_CDC_ACM_0, pdMS_TO_TICKS(20));
+    }
+}
 
 static void cdc_rx_cb(int itf, cdcacm_event_t *event)
 {
@@ -82,9 +103,7 @@ static void cdc_rx_cb(int itf, cdcacm_event_t *event)
             if (line_len) {
                 line_buf[line_len] = 0;
                 line_len = 0;
-                if (line_cb) {
-                    line_cb(line_buf);
-                }
+                xQueueSend(line_queue, line_buf, 0);
             }
         } else if (line_len < sizeof(line_buf) - 1) {
             line_buf[line_len++] = c;
@@ -103,6 +122,8 @@ static void cdc_line_coding_cb(int itf, cdcacm_event_t *event)
 void usb_init(usb_line_cb_t on_line)
 {
     line_cb = on_line;
+    line_queue = xQueueCreate(4, CONSOLE_LINE_MAX);
+    xTaskCreate(console_task, "console", 4096, NULL, 3, NULL);
     const tinyusb_config_t tusb_cfg = {
         .device_descriptor = NULL,  // default: Espressif VID, class IAD (needed for CDC in a composite)
         .string_descriptor = string_descriptor,

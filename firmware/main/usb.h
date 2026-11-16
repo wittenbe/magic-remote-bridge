@@ -23,5 +23,9 @@ extern volatile uint32_t usb_mouse_reports;
 // Consumer control usage (e.g. 0xE9 volume up), sent as press or release.
 void usb_consumer(uint16_t usage, bool down);
 
+// Waits (max. 20 ms) until the console output has gone out. For commands that print many lines at once: the
+// console drops what doesn't fit its TX buffer.
+void usb_console_drain(void);
+
 // Reboot into the ROM download mode (USB-Serial/JTAG), so esptool can flash without the BOOT button.
 void usb_reboot_to_download(void);

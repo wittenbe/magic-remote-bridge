@@ -1,0 +1,679 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Magic Remote Bridge</title>
+<style>
+:root {
+  --bg: #f4f5f7; --panel: #ffffff; --text: #1c1d21; --muted: #6b6f7a; --line: #dfe1e6;
+  --accent: #2563eb; --accent-soft: #dbe6fd; --ok: #15803d; --warn: #b45309; --err: #b91c1c;
+  --remote: #1b1c1f; --remote-edge: #34363c; --key: #2b2d32; --key-edge: #474a52; --key-text: #f1f2f4;
+  --live: #60a5fa; --sel: #fbbf24;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111215; --panel: #1a1b1f; --text: #e8e9ec; --muted: #9a9ea8; --line: #2c2e34;
+    --accent: #60a5fa; --accent-soft: #1e2a44; --ok: #4ade80; --warn: #fbbf24; --err: #f87171;
+    --remote: #0b0b0d; --remote-edge: #2a2c31;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+header h1 { font-size: 16px; margin: 0 auto 0 0; font-weight: 600; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: var(--bg); border: 1px solid var(--line); font-size: 13px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.on .dot { background: var(--ok); }
+button { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { opacity: .5; cursor: default; }
+button.recording { background: var(--err); border-color: var(--err); color: #fff; }
+/* One screen, no page scroll: the remote scales to the window height, the button table scrolls inside its card. */
+main { flex: 1; min-height: 0; display: grid; grid-template-columns: auto minmax(400px, 1.2fr) minmax(280px, 1fr);
+  gap: 16px; padding: 14px 16px; width: 100%; max-width: 1500px; margin: 0 auto; }
+.col { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.remote-wrap { display: flex; flex-direction: column; align-items: center; min-height: 0; }
+svg.remote { flex: 1; min-height: 0; height: 100%; width: auto; aspect-ratio: 300 / 985; display: block; user-select: none; }
+.grow { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.scroll { flex: 1; min-height: 0; overflow: auto; }
+@media (max-width: 900px), (max-height: 560px) {
+  body { height: auto; overflow: auto; }
+  main { grid-template-columns: 1fr; }
+  svg.remote { height: auto; width: 100%; max-width: 280px; flex: none; }
+}
+.remote .body { fill: var(--remote); stroke: var(--remote-edge); stroke-width: 2; }
+.remote .apps-bg { fill: #141518; stroke: var(--remote-edge); }
+.remote .key { cursor: pointer; }
+.remote .key .shape { fill: var(--key); stroke: var(--key-edge); stroke-width: 1.5; transition: fill .08s; }
+.remote .key .lbl { fill: var(--key-text); font-size: 15px; font-weight: 600; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.remote .key .lbl.small { font-size: 10px; font-weight: 600; letter-spacing: .3px; }
+.remote .key.unmapped .lbl { opacity: .38; }
+.remote .key:hover .shape { stroke: var(--live); }
+.remote .key.sel .shape { stroke: var(--sel); stroke-width: 3.5; }
+.remote .key.live .shape { fill: var(--live); }
+.remote .key.fixed { cursor: help; }
+.remote .key.fixed .shape { fill: none; }
+.remote .colour .shape { stroke: none; }
+.remote .key.colour.live .shape { stroke: var(--live); stroke-width: 4; }
+.remote .sw-mark { fill: var(--sel); font-size: 13px; font-weight: 700; text-anchor: middle; pointer-events: none; }
+.legend { color: var(--muted); font-size: 12px; margin-top: 6px; white-space: nowrap; }
+.legend b { color: var(--text); font-weight: 600; }
+section.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; }
+section.card h2 { font-size: 15px; margin: 0 0 8px; font-weight: 600; }
+.muted { color: var(--muted); }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; border-right: 1px solid var(--line); }
+.seg button:last-child { border-right: 0; }
+.seg button.active { background: var(--accent); color: #fff; }
+select, input[type=number], input[type=text] { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+select { min-width: 200px; }
+label.chk { display: inline-flex; align-items: center; gap: 5px; }
+.result { margin-top: 8px; padding: 8px 12px; border-radius: 8px; background: var(--accent-soft); }
+.note { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+.sliders { display: grid; grid-template-columns: 120px 1fr 80px; gap: 4px 12px; align-items: center; }
+.sliders label { font-weight: 500; cursor: help; text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
+.sliders input[type=range] { width: 100%; accent-color: var(--accent); }
+.sliders input[type=number] { width: 80px; padding: 3px 6px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+td { padding: 4px 6px; border-bottom: 1px solid var(--line); }
+tr { cursor: pointer; }
+tr:hover td { background: var(--accent-soft); }
+tr.sel td { background: var(--accent-soft); font-weight: 600; }
+td.code { color: var(--muted); font-family: ui-monospace, Consolas, monospace; width: 64px; }
+pre.log { max-height: 180px; overflow: auto; background: var(--bg); padding: 8px; border-radius: 8px; font-size: 12px; margin: 8px 0 0; white-space: pre-wrap; word-break: break-all; }
+.toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--panel); padding: 8px 16px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 5; }
+.toast.show { opacity: .95; }
+.banner { padding: 6px 16px; font-size: 13px; background: var(--accent-soft); border-bottom: 1px solid var(--line); }
+.banner.err { color: var(--err); }
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Magic Remote Bridge</h1>
+  <span id="conn" class="pill"><span class="dot"></span><span id="connText">not connected</span></span>
+  <span id="modePill" class="pill hidden">Mode: <b id="modeText">?</b></span>
+  <button id="modeBtn" class="hidden">Switch mode</button>
+  <button id="connectBtn" class="primary">Connect</button>
+</header>
+<div id="unsupported" class="banner err hidden">This browser has no WebSerial. Open this page in Chrome or Edge (desktop).</div>
+<div id="intro" class="banner">Plug in the bridge and click <b>Connect</b>. Close <code>console.py</code> or any other serial terminal first: on Windows only one program can open the port.</div>
+
+<main>
+  <div class="remote-wrap">
+    <svg id="remote" class="remote" viewBox="0 0 300 985" aria-label="Magic Remote"></svg>
+    <div class="legend">Click or press a button to edit it · dim = unmapped · <b style="color:var(--sel)">⇄</b> = mode switch</div>
+  </div>
+
+  <div class="col">
+    <section class="card" id="editor">
+      <h2 id="edTitle">Select a button</h2>
+      <div id="edBody" class="hidden">
+        <div class="muted" id="edSub"></div>
+        <div class="row">
+          <div class="seg" id="typeSeg">
+            <button data-type="none">Nothing</button>
+            <button data-type="key">Key</button>
+            <button data-type="consumer">Media</button>
+            <button data-type="mouse">Mouse</button>
+          </div>
+        </div>
+        <div id="pKey" class="hidden">
+          <div class="row">
+            <label class="chk"><input type="checkbox" data-mod="1">Ctrl</label>
+            <label class="chk"><input type="checkbox" data-mod="2">Shift</label>
+            <label class="chk"><input type="checkbox" data-mod="4">Alt</label>
+            <label class="chk"><input type="checkbox" data-mod="8">Win</label>
+            <select id="keySel"></select>
+          </div>
+          <div class="row">
+            <button id="recBtn">Record from keyboard</button>
+            <span class="muted" id="recHint">Press a key or shortcut on the PC keyboard.</span>
+          </div>
+        </div>
+        <div id="pConsumer" class="hidden row"><select id="consSel"></select></div>
+        <div id="pMouse" class="hidden row"><select id="mouseSel"></select></div>
+        <div class="result" id="edResult"></div>
+        <div class="row">
+          <label class="chk"><input type="checkbox" id="swChk">Mode-switch key (hold to switch TV ⇄ PC)</label>
+        </div>
+        <div class="note" id="edNote"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Pointer and sleep</h2>
+      <div class="sliders" id="sliders"></div>
+    </section>
+  </div>
+
+  <div class="col">
+    <section class="card grow">
+      <h2>All buttons</h2>
+      <div class="scroll"><table id="mapTable"></table></div>
+      <div class="row" style="margin-bottom:0"><button id="resetBtn">Reset key map to defaults</button></div>
+    </section>
+
+    <section class="card">
+      <details id="logBox">
+        <summary>Console</summary>
+        <pre class="log" id="log"></pre>
+        <div class="row">
+          <input type="text" id="cmdIn" placeholder="command, e.g. status" style="flex:1">
+          <button id="cmdBtn">Send</button>
+        </div>
+      </details>
+    </section>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+// Talks to the bridge's console (the same commands as tools/console.py) over WebSerial. The firmware is the
+// source of truth: every change is sent as a command and the page updates from the bridge's echo.
+
+const VID = 0x303a, PID = 0x4005;
+const PSEUDO = new Set([0x0000, 0x803e, 0x803f]);  // "none", "active", "idle"
+
+// ---- remote layout (drawn after the MR25GB; codes in docs/protocol.md) ----
+const NAMES = {};
+const LAYOUT = [];  // {code, name, draw(g)}
+const NS = 'http://www.w3.org/2000/svg';
+
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function label(g, x, y, text, small) {
+  const t = el('text', {x, y, class: 'lbl' + (small ? ' small' : '')}, g);
+  t.textContent = text;
+}
+function circleKey(code, name, x, y, text, r = 21, small = false) {
+  LAYOUT.push({code, name, cx: x, cy: y, draw(g) { el('circle', {cx: x, cy: y, r, class: 'shape'}, g); label(g, x, y, text, small); }});
+}
+function rectKey(code, name, x, y, w, h, text, extra = {}) {
+  LAYOUT.push({code, name, cx: x, cy: y, draw(g) {
+    el('rect', {x: x - w / 2, y: y - h / 2, width: w, height: h, rx: Math.min(h / 2, 12), class: 'shape', ...extra}, g);
+    if (text) label(g, x, y, text, true);
+  }});
+}
+function rocker(codeUp, codeDown, nameUp, nameDown, x, top, w, h, tUp, tDown) {
+  const r = w / 2, mid = top + h / 2, l = x - r, rt = x + r, bot = top + h;
+  LAYOUT.push({code: codeUp, name: nameUp, cx: x, cy: top + h / 4, draw(g) {
+    el('path', {d: `M${l},${mid} V${top + r} A${r},${r} 0 0 1 ${rt},${top + r} V${mid} Z`, class: 'shape'}, g);
+    label(g, x, top + h / 4, tUp);
+  }});
+  LAYOUT.push({code: codeDown, name: nameDown, cx: x, cy: top + 3 * h / 4, draw(g) {
+    el('path', {d: `M${l},${mid} V${bot - r} A${r},${r} 0 0 0 ${rt},${bot - r} V${mid} Z`, class: 'shape'}, g);
+    label(g, x, top + 3 * h / 4, tDown);
+  }});
+}
+function sector(code, name, cx, cy, r1, r2, a0, a1, text) {
+  const rad = a => a * Math.PI / 180, p = (r, a) => `${cx + r * Math.cos(rad(a))},${cy + r * Math.sin(rad(a))}`;
+  const am = (a0 + a1) / 2, rm = (r1 + r2) / 2;
+  const lx = cx + rm * Math.cos(rad(am)), ly = cy + rm * Math.sin(rad(am));
+  LAYOUT.push({code, name, cx: lx, cy: ly, draw(g) {
+    el('path', {d: `M${p(r2, a0)} A${r2},${r2} 0 0 1 ${p(r2, a1)} L${p(r1, a1)} A${r1},${r1} 0 0 0 ${p(r1, a0)} Z`, class: 'shape'}, g);
+    label(g, lx, ly, text);
+  }});
+}
+
+LAYOUT.push({code: -1, name: 'Power', fixed: 'IR only: always controls the TV, never reaches the bridge.', cx: 95, cy: 62,
+  draw(g) { el('circle', {cx: 95, cy: 62, r: 17, class: 'shape', style: 'stroke:#ef4444'}, g); label(g, 95, 62, '⏻'); }});
+const digitPos = [[150, 268], [95, 118], [150, 118], [205, 118], [95, 168], [150, 168], [205, 168], [95, 218], [150, 218], [205, 218]];
+digitPos.forEach(([x, y], n) => circleKey(0x8010 + n, String(n), x, y, String(n)));
+circleKey(0x80ab, 'Guide / List', 95, 268, 'LIST', 21, true);
+circleKey(0x8045, '"…"', 205, 268, '•••');
+rocker(0x8002, 0x8003, 'Vol+', 'Vol−', 95, 305, 46, 140, '+', '−');
+rocker(0x8000, 0x8001, 'Ch+', 'Ch−', 205, 305, 46, 140, '∧', '∨');
+circleKey(0x8009, 'Mute', 150, 330, '🔇', 21);
+circleKey(0x808b, 'Voice', 150, 405, '🎤', 21);
+circleKey(0x807c, 'Home', 95, 478, '⌂');
+circleKey(0x80a1, 'Input', 205, 478, '⇥');
+sector(0x8040, 'Up', 150, 585, 40, 82, -135, -45, '▲');
+sector(0x8006, 'Right', 150, 585, 40, 82, -45, 45, '▶');
+sector(0x8041, 'Down', 150, 585, 40, 82, 45, 135, '▼');
+sector(0x8007, 'Left', 150, 585, 40, 82, 135, 225, '◀');
+circleKey(0x8044, 'OK / wheel click', 150, 585, 'OK', 36);
+circleKey(0x8028, 'Back', 92, 690, '↩');
+circleKey(0x8043, 'Settings', 208, 690, '⚙');
+[[0x8072, 'Red', '#dc2626', 84], [0x8071, 'Green', '#16a34a', 128], [0x8063, 'Yellow', '#eab308', 172], [0x8061, 'Blue', '#2563eb', 216]]
+  .forEach(([code, name, fill, x]) => rectKey(code, name, x, 735, 36, 16, '', {style: `fill:${fill}`}));
+const APPS = [[0x8056, 'Netflix', 'NETFLIX'], [0x805c, 'Prime Video', 'PRIME'], [0x8031, 'Disney+', 'DISNEY+'],
+              [0x8049, 'Rakuten TV', 'RAKUTEN'], [0x8048, 'Google Assistant', 'ASSIST.'], [0x800c, 'Alexa', 'ALEXA']];
+APPS.forEach(([code, name, text], i) => rectKey(code, name, i % 2 ? 194 : 106, 792 + 46 * Math.floor(i / 2), 80, 34, text));
+for (const b of LAYOUT) NAMES[b.code] = b.name;
+const COLOUR_CODES = new Set([0x8072, 0x8071, 0x8063, 0x8061]);
+
+// ---- HID tables ----
+const MOD_NAMES = [[1, 'Ctrl'], [2, 'Shift'], [4, 'Alt'], [8, 'Win']];
+const KEYS = [];  // [usage, label, group, KeyboardEvent.code]
+for (let i = 0; i < 26; i++) KEYS.push([0x04 + i, String.fromCharCode(65 + i), 'Letters', 'Key' + String.fromCharCode(65 + i)]);
+for (let i = 1; i <= 9; i++) KEYS.push([0x1d + i, String(i), 'Digits', 'Digit' + i]);
+KEYS.push([0x27, '0', 'Digits', 'Digit0']);
+for (let i = 1; i <= 12; i++) KEYS.push([0x39 + i, 'F' + i, 'Function keys', 'F' + i]);
+for (let i = 13; i <= 24; i++) KEYS.push([0x68 + i - 13, 'F' + i, 'Function keys', 'F' + i]);
+[[0x28, 'Enter', 'Enter'], [0x29, 'Esc', 'Escape'], [0x2a, 'Backspace', 'Backspace'], [0x2b, 'Tab', 'Tab'],
+ [0x2c, 'Space', 'Space'], [0x4f, 'Right arrow', 'ArrowRight'], [0x50, 'Left arrow', 'ArrowLeft'],
+ [0x51, 'Down arrow', 'ArrowDown'], [0x52, 'Up arrow', 'ArrowUp'], [0x4a, 'Home', 'Home'], [0x4d, 'End', 'End'],
+ [0x4b, 'Page Up', 'PageUp'], [0x4e, 'Page Down', 'PageDown'], [0x49, 'Insert', 'Insert'], [0x4c, 'Delete', 'Delete'],
+ [0x46, 'Print Screen', 'PrintScreen'], [0x47, 'Scroll Lock', 'ScrollLock'], [0x48, 'Pause', 'Pause'],
+ [0x39, 'Caps Lock', 'CapsLock'], [0x65, 'Menu', 'ContextMenu']].forEach(([u, l, c]) => KEYS.push([u, l, 'Navigation and editing', c]));
+[[0x2d, '-', 'Minus'], [0x2e, '=', 'Equal'], [0x2f, '[', 'BracketLeft'], [0x30, ']', 'BracketRight'],
+ [0x31, '\\', 'Backslash'], [0x33, ';', 'Semicolon'], [0x34, "'", 'Quote'], [0x35, '`', 'Backquote'],
+ [0x36, ',', 'Comma'], [0x37, '.', 'Period'], [0x38, '/', 'Slash'], [0x64, '< > (ISO)', 'IntlBackslash']]
+  .forEach(([u, l, c]) => KEYS.push([u, l, 'Punctuation (US layout)', c]));
+[[0x53, 'Num Lock', 'NumLock'], [0x54, 'Num /', 'NumpadDivide'], [0x55, 'Num *', 'NumpadMultiply'],
+ [0x56, 'Num -', 'NumpadSubtract'], [0x57, 'Num +', 'NumpadAdd'], [0x58, 'Num Enter', 'NumpadEnter'],
+ [0x63, 'Num .', 'NumpadDecimal'], [0x62, 'Num 0', 'Numpad0']].forEach(([u, l, c]) => KEYS.push([u, l, 'Numpad', c]));
+for (let i = 1; i <= 9; i++) KEYS.push([0x58 + i, 'Num ' + i, 'Numpad', 'Numpad' + i]);
+[[0xe0, 'Ctrl', 'ControlLeft'], [0xe1, 'Shift', 'ShiftLeft'], [0xe2, 'Alt', 'AltLeft'], [0xe3, 'Win', 'MetaLeft'],
+ [0xe4, 'Right Ctrl', 'ControlRight'], [0xe5, 'Right Shift', 'ShiftRight'], [0xe6, 'AltGr', 'AltRight'],
+ [0xe7, 'Right Win', 'MetaRight']].forEach(([u, l, c]) => KEYS.push([u, l, 'Modifier keys', c]));
+const KEY_BY_USAGE = new Map(KEYS.map(k => [k[0], k]));
+const KEY_BY_CODE = new Map(KEYS.map(k => [k[3], k]));
+
+const CONSUMER = [[0xcd, 'Play / Pause'], [0xb5, 'Next track'], [0xb6, 'Previous track'], [0xb7, 'Stop'],
+  [0xb3, 'Fast forward'], [0xb4, 'Rewind'], [0xe9, 'Volume up'], [0xea, 'Volume down'], [0xe2, 'Mute'],
+  [0x224, 'Browser back'], [0x225, 'Browser forward'], [0x227, 'Browser refresh'], [0x223, 'Browser home'],
+  [0x221, 'Search'], [0x192, 'Calculator'], [0x18a, 'Mail'], [0x194, 'File explorer'], [0x183, 'Media player'],
+  [0x6f, 'Brightness up'], [0x70, 'Brightness down']];
+const CONSUMER_BY_USAGE = new Map(CONSUMER);
+const MOUSE = [[1, 'Left click'], [2, 'Right click'], [4, 'Middle click'], [8, 'Back (button 4)'], [16, 'Forward (button 5)']];
+const MOUSE_BY_USAGE = new Map(MOUSE);
+
+const hex = (n, w = 4) => '0x' + n.toString(16).padStart(w, '0');
+
+function describe(m) {
+  if (!m) return 'nothing';
+  if (m.type === 'key') {
+    const parts = MOD_NAMES.filter(([bit]) => m.mods & bit).map(([, n]) => n);
+    if (m.mods & 0xf0) parts.push('right ' + hex(m.mods >> 4, 1));
+    if (m.usage) parts.push(KEY_BY_USAGE.get(m.usage)?.[1] ?? 'key ' + hex(m.usage, 2));
+    return parts.join(' + ') || 'nothing';
+  }
+  if (m.type === 'consumer') return CONSUMER_BY_USAGE.get(m.usage) ?? 'media ' + hex(m.usage, 3);
+  if (m.type === 'mouse') return MOUSE_BY_USAGE.get(m.usage) ?? 'mouse ' + hex(m.usage, 2);
+  return m.type;
+}
+
+// ---- state ----
+const state = {port: null, writer: null, reader: null, readDone: null, mode: null, settings: {},
+  keymap: new Map(), keymapPending: null, sel: null, recording: false, live: null};
+
+// ---- drawing ----
+const svg = document.getElementById('remote');
+const keyEls = new Map();
+function drawRemote() {
+  el('path', {class: 'body', d: 'M40,130 A110,110 0 0 1 260,130 L254,880 Q250,965 150,972 Q50,965 46,880 Z'}, svg);
+  el('circle', {cx: 205, cy: 58, r: 3, fill: '#555'}, svg);  // microphone hole
+  el('rect', {class: 'apps-bg', x: 58, y: 762, width: 184, height: 156, rx: 16}, svg);
+  el('line', {x1: 150, y1: 772, x2: 150, y2: 908, stroke: '#3a3c42'}, svg);
+  for (const b of LAYOUT) {
+    const g = el('g', {class: 'key' + (b.fixed ? ' fixed' : '') + (COLOUR_CODES.has(b.code) ? ' colour' : '')}, svg);
+    b.draw(g);
+    const title = el('title', {}, g);
+    keyEls.set(b.code, {g, title, b});
+    if (b.fixed) { title.textContent = `${b.name}: ${b.fixed}`; continue; }
+    g.addEventListener('click', () => select(b.code));
+  }
+  el('text', {class: 'sw-mark', id: 'swMark'}, svg).textContent = '⇄';
+}
+
+function refreshRemote() {
+  const sw = state.settings.switchkey;
+  for (const [code, {g, title, b}] of keyEls) {
+    if (b.fixed) continue;
+    const m = state.keymap.get(code);
+    g.classList.toggle('unmapped', !m);
+    g.classList.toggle('sel', code === state.sel);
+    g.classList.toggle('live', code === state.live);
+    title.textContent = `${b.name} (${hex(code)}) → ${describe(m)}${code === sw ? ' · mode-switch key' : ''}`;
+  }
+  const mark = document.getElementById('swMark'), k = keyEls.get(sw);
+  mark.classList.toggle('hidden', !k);
+  if (k) { mark.setAttribute('x', k.b.cx); mark.setAttribute('y', k.b.cy - (COLOUR_CODES.has(sw) ? 14 : 26)); }
+}
+
+function refreshTable() {
+  const t = document.getElementById('mapTable');
+  t.innerHTML = '';
+  const rows = LAYOUT.filter(b => !b.fixed).sort((a, b) => (a.cy - b.cy) || (a.cx - b.cx));
+  for (const b of rows) {
+    const tr = document.createElement('tr');
+    if (b.code === state.sel) tr.className = 'sel';
+    const sw = b.code === state.settings.switchkey ? ' ⇄' : '';
+    tr.innerHTML = `<td class="code">${hex(b.code)}</td><td>${b.name}${sw}</td><td>${describe(state.keymap.get(b.code))}</td>`;
+    tr.addEventListener('click', () => select(b.code));
+    t.appendChild(tr);
+  }
+}
+
+// ---- editor ----
+const $ = id => document.getElementById(id);
+function fillSelects() {
+  const ks = $('keySel');
+  ks.innerHTML = '<option value="0">(only the modifiers)</option>';
+  const groups = new Map();
+  for (const k of KEYS) {
+    if (!groups.has(k[2])) { const og = document.createElement('optgroup'); og.label = k[2]; groups.set(k[2], og); ks.appendChild(og); }
+    groups.get(k[2]).appendChild(new Option(k[1], k[0]));
+  }
+  $('consSel').innerHTML = '<option value="" disabled>Choose…</option>';
+  CONSUMER.forEach(([u, l]) => $('consSel').appendChild(new Option(l, u)));
+  $('mouseSel').innerHTML = '<option value="" disabled>Choose…</option>';
+  MOUSE.forEach(([u, l]) => $('mouseSel').appendChild(new Option(l, u)));
+}
+
+let edType = 'none';
+function select(code) {
+  stopRecording();
+  state.sel = code;
+  const m = state.keymap.get(code);
+  edType = m ? m.type : 'none';
+  loadEditor();
+  refreshRemote();
+  refreshTable();
+}
+
+function loadEditor() {
+  const code = state.sel;
+  if (code == null) return;
+  const m = state.keymap.get(code);
+  $('edTitle').textContent = NAMES[code];
+  $('edSub').textContent = `Button code ${hex(code)}`;
+  $('edBody').classList.remove('hidden');
+  for (const b of $('typeSeg').children) b.classList.toggle('active', b.dataset.type === edType);
+  $('pKey').classList.toggle('hidden', edType !== 'key');
+  $('pConsumer').classList.toggle('hidden', edType !== 'consumer');
+  $('pMouse').classList.toggle('hidden', edType !== 'mouse');
+  const same = m && m.type === edType;
+  for (const c of document.querySelectorAll('[data-mod]')) c.checked = same && (m.mods & +c.dataset.mod) !== 0;
+  $('keySel').value = same && edType === 'key' ? m.usage : 0;
+  $('consSel').value = same && edType === 'consumer' ? m.usage : '';
+  $('mouseSel').value = same && edType === 'mouse' ? m.usage : '';
+  $('edResult').innerHTML = `In PC mode: <b>${describe(m)}</b>`;
+  const isSw = code === state.settings.switchkey;
+  $('swChk').checked = isSw;
+  $('swChk').disabled = isSw;  // there is always one switch key; pick another button to move it
+  const hold = state.settings.switchhold ?? 800;
+  $('edNote').textContent = isSw && hold === 0
+    ? 'Switches modes as soon as it is pressed (switch hold 0); it does nothing else on the TV or the PC. To move the switch to another button, select that button and tick the box there.'
+    : isSw
+    ? `Hold ${hold} ms to switch modes. A short press goes to the TV in TV mode and does the action above in PC mode. To move the switch to another button, select that button and tick the box there.`
+    : 'TV mode is not affected: the TV always gets the original button.';
+}
+
+function sendMap(type, usage, mods = 0) {
+  if (type === 'none') send(`unmap ${hex(state.sel)}`);
+  else send(`map ${hex(state.sel)} ${type} ${hex(usage, 2)} ${hex(mods, 2)}`);
+}
+
+function keyChanged() {
+  let mods = 0;
+  for (const c of document.querySelectorAll('[data-mod]')) if (c.checked) mods |= +c.dataset.mod;
+  const usage = +$('keySel').value;
+  if (usage || mods) sendMap('key', usage, mods);
+}
+
+$('typeSeg').addEventListener('click', e => {
+  const t = e.target.dataset.type;
+  if (!t || state.sel == null) return;
+  edType = t;
+  if (t === 'none') sendMap('none');
+  loadEditor();
+});
+for (const c of document.querySelectorAll('[data-mod]')) c.addEventListener('change', keyChanged);
+$('keySel').addEventListener('change', keyChanged);
+$('consSel').addEventListener('change', () => sendMap('consumer', +$('consSel').value));
+$('mouseSel').addEventListener('change', () => sendMap('mouse', +$('mouseSel').value));
+$('swChk').addEventListener('change', () => { if ($('swChk').checked) send(`set switchkey ${hex(state.sel)}`); });
+$('resetBtn').addEventListener('click', () => { if (confirm('Replace the whole key map with the defaults?')) send('keymap reset'); });
+
+// Record a key or shortcut from the PC keyboard. A modifier pressed and released alone (e.g. Win) maps to itself.
+function stopRecording() {
+  state.recording = false;
+  $('recBtn').classList.remove('recording');
+  $('recBtn').textContent = 'Record from keyboard';
+  $('recHint').textContent = 'Press a key or shortcut on the PC keyboard.';
+}
+const evMods = e => (e.ctrlKey ? 1 : 0) | (e.shiftKey ? 2 : 0) | (e.altKey ? 4 : 0) | (e.metaKey ? 8 : 0);
+$('recBtn').addEventListener('click', () => {
+  if (state.recording) { stopRecording(); return; }
+  state.recording = true;
+  $('recBtn').classList.add('recording');
+  $('recBtn').textContent = 'Stop recording';
+  $('recHint').textContent = 'Listening… (Alt+Tab, Ctrl+Alt+Del and similar never reach the page: pick those from the list)';
+});
+window.addEventListener('keydown', e => {
+  if (!state.recording) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const k = KEY_BY_CODE.get(e.code);
+  if (!k) { $('recHint').textContent = `Key "${e.code}" is not in the list.`; return; }
+  if (k[2] === 'Modifier keys') return;  // wait: a modifier alone is taken on keyup
+  stopRecording();
+  sendMap('key', k[0], evMods(e));
+}, true);
+window.addEventListener('keyup', e => {
+  if (!state.recording) return;
+  e.preventDefault();
+  const k = KEY_BY_CODE.get(e.code);
+  if (!k || k[2] !== 'Modifier keys') return;
+  stopRecording();
+  const bit = {0xe0: 1, 0xe1: 2, 0xe2: 4, 0xe3: 8}[k[0]] ?? 0;
+  sendMap('key', k[0], evMods(e) & ~bit);
+}, true);
+
+// ---- settings sliders ----
+const SLIDERS = [
+  ['gain', 'Pointer speed', 0.005, 0.12, 0.001, 'px per gyro unit and report'],
+  ['accel', 'Acceleration', 0, 3, 0.1, '0 = off; fast flicks travel further'],
+  ['dead', 'Dead zone', 0, 40, 1, 'stops the cursor creeping while held still (gyro units, ~17 per °/s)'],
+  ['drag', 'Click → drag', 0, 100, 1, 'px to move with a mouse button held before it becomes a drag; 0 = off'],
+  ['smooth', 'Smoothing', 0, 50, 1, 'ms each report is spread over; more = smoother, more latency'],
+  ['switchhold', 'Switch hold', 0, 3000, 50, 'ms the mode-switch key must be held; 0 = switch on press (the key then does nothing else)'],
+  ['pcsleep', 'PC mode sleep', 0, 600, 5, 's idle before the remote sleeps in PC mode; 0 = never'],
+  ['tvsleep', 'TV mode sleep', 0, 600, 5, 's idle before passing on the TV\'s sleep request; 0 = TV decides'],
+];
+function buildSliders() {
+  const box = $('sliders');
+  for (const [name, text, min, max, step, hint] of SLIDERS) {
+    const lab = document.createElement('label');
+    lab.textContent = text;
+    const range = Object.assign(document.createElement('input'), {type: 'range', min, max, step, id: 's_' + name});
+    const num = Object.assign(document.createElement('input'), {type: 'number', min, max, step, id: 'n_' + name});
+    range.addEventListener('input', () => { num.value = range.value; });
+    // Sent on release only: every "set" is written to flash.
+    range.addEventListener('change', () => send(`set ${name} ${range.value}`));
+    num.addEventListener('change', () => send(`set ${name} ${num.value}`));
+    lab.title = range.title = hint;  // tooltips: the hints as text don't fit on one screen
+    box.append(lab, range, num);
+  }
+}
+function refreshSliders() {
+  for (const [name] of SLIDERS) {
+    const v = state.settings[name];
+    if (v === undefined) continue;
+    if (document.activeElement !== $('s_' + name)) $('s_' + name).value = v;
+    if (document.activeElement !== $('n_' + name)) $('n_' + name).value = v;
+  }
+}
+
+// ---- console lines from the bridge ----
+const logLines = [];
+function addLog(line) {
+  logLines.push(line);
+  if (logLines.length > 400) logLines.shift();
+  if ($('logBox').open) { const p = $('log'); p.textContent = logLines.join('\n'); p.scrollTop = p.scrollHeight; }
+}
+$('logBox').addEventListener('toggle', () => addLog(''));
+
+let toastTimer;
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+const TYPES = {key: 'key', consumer: 'consumer', mouse: 'mouse'};
+function handleLine(raw) {
+  const line = raw.replace(/\x1b\[[0-9;]*m/g, '');
+  addLog(line);
+  const m = line.match(/^([IWE]) \(\d+\) ([\w-]+): (.*)$/);
+  if (!m) return;
+  const [, level, tag, msg] = m;
+  let r;
+  if (tag === 'settings') {
+    const before = JSON.stringify(state.settings);
+    for (const [, k, v] of msg.matchAll(/(\w+)=(0x[0-9a-f]+|-?[\d.]+)/g)) state.settings[k] = v.startsWith('0x') ? parseInt(v, 16) : parseFloat(v);
+    if (before !== '{}' && before !== JSON.stringify(state.settings)) toast('Saved');
+    refreshSliders(); refreshRemote(); refreshTable(); loadEditor();
+  } else if (tag === 'keymap') {
+    if (msg.startsWith('keymap begin')) { state.keymapPending = new Map(); return; }
+    const target = state.keymapPending ?? state.keymap;
+    if ((r = msg.match(/^map (0x[0-9a-f]+) (\w+) (0x[0-9a-f]+) (0x[0-9a-f]+)/)) && TYPES[r[2]]) {
+      target.set(parseInt(r[1], 16), {type: r[2], usage: parseInt(r[3], 16), mods: parseInt(r[4], 16)});
+      if (!state.keymapPending) { toast(`${NAMES[parseInt(r[1], 16)] ?? r[1]} → ${describe(target.get(parseInt(r[1], 16)))}`); }
+    } else if ((r = msg.match(/^unmap (0x[0-9a-f]+)/))) {
+      target.delete(parseInt(r[1], 16));
+      if (!state.keymapPending) toast(`${NAMES[parseInt(r[1], 16)] ?? r[1]} → nothing`);
+    } else if (msg.startsWith('keymap end') && state.keymapPending) {
+      state.keymap = state.keymapPending;
+      state.keymapPending = null;
+    } else return;
+    if (!state.keymapPending) { refreshRemote(); refreshTable(); loadEditor(); }
+  } else if (tag === 'main' && (r = msg.match(/^FD btn=(0x[0-9a-f]+)/))) {
+    const code = parseInt(r[1], 16);
+    if (PSEUDO.has(code)) { state.live = null; refreshRemote(); return; }
+    state.live = code;
+    // Pressing a button selects it, except mouse-button keys: those are what clicks in this page.
+    if (keyEls.has(code) && state.keymap.get(code)?.type !== 'mouse') select(code);
+    else refreshRemote();
+  } else if (tag === 'pc' && (r = msg.match(/MODE → (PC|TV)|mode=(PC|TV)/))) {
+    setMode(r[1] || r[2]);
+  } else if (level === 'W' && tag === 'main') {
+    toast(msg);
+  }
+}
+
+function setMode(mode) {
+  state.mode = mode;
+  $('modePill').classList.remove('hidden');
+  $('modeBtn').classList.remove('hidden');
+  $('modeText').textContent = mode;
+  $('modeBtn').textContent = mode === 'PC' ? 'Switch to TV mode' : 'Switch to PC mode';
+}
+
+// ---- serial ----
+const enc = new TextEncoder();
+async function send(cmd) {
+  if (!state.writer) { toast('Not connected'); return; }
+  addLog('> ' + cmd);
+  try { await state.writer.write(enc.encode(cmd + '\r\n')); } catch (e) { toast('Send failed: ' + e.message); }
+}
+
+function setConnected(on, text) {
+  $('conn').classList.toggle('on', on);
+  $('connText').textContent = text;
+  $('connectBtn').textContent = on ? 'Disconnect' : 'Connect';
+  $('connectBtn').classList.toggle('primary', !on);
+  $('intro').classList.toggle('hidden', on);
+  if (!on) { $('modePill').classList.add('hidden'); $('modeBtn').classList.add('hidden'); }
+}
+
+async function openPort(port) {
+  try {
+    await port.open({baudRate: 115200});
+  } catch (e) {
+    setConnected(false, 'port busy');
+    toast('Can\'t open the port: is console.py or another terminal still running?');
+    return;
+  }
+  state.port = port;
+  state.writer = port.writable.getWriter();
+  setConnected(true, 'connected');
+  state.readDone = readLoop(port);
+  await send('');
+  await send('status');
+  await send('keymap');
+}
+
+async function readLoop(port) {
+  const dec = new TextDecoderStream();
+  const piped = port.readable.pipeTo(dec.writable).catch(() => {});
+  const reader = dec.readable.getReader();
+  state.reader = reader;
+  let buf = '';
+  try {
+    for (;;) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      buf += value;
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) { handleLine(buf.slice(0, i).replace(/\r$/, '')); buf = buf.slice(i + 1); }
+    }
+  } catch (e) { /* port lost (bridge reset or unplugged) */ }
+  reader.releaseLock();
+  await piped;
+}
+
+async function closePort() {
+  const port = state.port;
+  if (!port) return;
+  state.port = null;
+  try { await state.reader?.cancel(); } catch (e) {}
+  await state.readDone;
+  try { state.writer?.releaseLock(); } catch (e) {}
+  state.writer = state.reader = null;
+  try { await port.close(); } catch (e) {}
+  setConnected(false, 'not connected');
+}
+
+$('connectBtn').addEventListener('click', async () => {
+  if (state.port) { await closePort(); return; }
+  try {
+    const port = await navigator.serial.requestPort({filters: [{usbVendorId: VID, usbProductId: PID}]});
+    await openPort(port);
+  } catch (e) { /* chooser cancelled */ }
+});
+$('modeBtn').addEventListener('click', () => send('mode'));
+$('cmdBtn').addEventListener('click', () => { const v = $('cmdIn').value.trim(); if (v) send(v); $('cmdIn').value = ''; });
+$('cmdIn').addEventListener('keydown', e => { if (e.key === 'Enter') $('cmdBtn').click(); });
+
+function isBridge(port) { const i = port.getInfo(); return i.usbVendorId === VID && i.usbProductId === PID; }
+
+// In PC mode the remote's arrow and digit keys arrive as keyboard input: a control that kept the focus would
+// change (and remap or re-set) with every press. So controls let go of the focus once they've changed.
+document.addEventListener('change', e => { if (e.target.id !== 'cmdIn') e.target.blur(); }, true);
+
+// ---- start ----
+drawRemote();
+fillSelects();
+buildSliders();
+refreshRemote();
+refreshTable();
+if (!('serial' in navigator)) {
+  $('unsupported').classList.remove('hidden');
+  $('intro').classList.add('hidden');
+  $('connectBtn').disabled = true;
+} else {
+  // Reconnect by itself to a port the user already allowed (page reload, bridge reset or re-plugged).
+  navigator.serial.addEventListener('connect', e => { if (!state.port && isBridge(e.target)) openPort(e.target); });
+  navigator.serial.addEventListener('disconnect', e => {
+    if (state.port === e.target) { state.port = null; state.writer = state.reader = null; setConnected(false, 'bridge gone, waiting…'); }
+  });
+  navigator.serial.getPorts().then(ports => { const p = ports.find(isBridge); if (p) openPort(p); });
+}
+</script>
+</body>
+</html>

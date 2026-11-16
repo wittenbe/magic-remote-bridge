@@ -14,6 +14,8 @@ settings_t settings = {
     .smooth = 15,
     .dead = 12.0f,
     .drag = 30.0f,
+    .switch_key = 0x8072,  // red
+    .switch_hold = 800,
 };
 
 void settings_load(void)
@@ -56,6 +58,10 @@ int settings_set(const char *name, float value)
         settings.dead = value < 0 ? 0 : value;
     } else if (!strcmp(name, "drag")) {
         settings.drag = value < 0 ? 0 : value;
+    } else if (!strcmp(name, "switchkey")) {
+        settings.switch_key = (uint32_t)value & 0xffff;
+    } else if (!strcmp(name, "switchhold")) {
+        settings.switch_hold = value < 0 ? 0 : value > 5000 ? 5000 : (uint32_t)value;
     } else if (!strcmp(name, "smooth")) {
         settings.smooth = value < 0 ? 0 : value > 100 ? 100 : (uint32_t)value;
     } else {
@@ -68,8 +74,9 @@ int settings_set(const char *name, float value)
 
 void settings_print(void)
 {
-    ESP_LOGI(TAG, "gain=%.4f accel=%.2f tvsleep=%lus%s pcsleep=%lus%s smooth=%lums dead=%.1f drag=%.0fpx", settings.gain, settings.accel,
+    ESP_LOGI(TAG, "gain=%.4f accel=%.2f tvsleep=%lus%s pcsleep=%lus%s smooth=%lums dead=%.1f drag=%.0fpx "
+             "switchkey=0x%04lx switchhold=%lums", settings.gain, settings.accel,
              (unsigned long)settings.tv_sleep, settings.tv_sleep ? "" : " (TV decides)",
              (unsigned long)settings.pc_sleep, settings.pc_sleep ? "" : " (never)", (unsigned long)settings.smooth, settings.dead,
-             settings.drag);
+             settings.drag, (unsigned long)settings.switch_key, (unsigned long)settings.switch_hold);
 }
