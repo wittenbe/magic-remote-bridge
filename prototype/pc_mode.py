@@ -47,11 +47,10 @@ KEYMAP = {
     0x8044: BTN_LEFT,                       # OK / wheel click
     0x8028: KEY["BACK"],                    # Back → browser/app back
     0x807C: KEY["LEFTMETA"],                # Home → Super (launcher)
-    0x8043: BTN_RIGHT,                      # Settings → right click (code from the MR20 driver, untested)
+    0x8043: BTN_RIGHT,                      # Settings → right click
     0x8002: KEY["VOLUMEUP"], 0x8003: KEY["VOLUMEDOWN"], 0x8009: KEY["MUTE"],
     0x8000: KEY["PAGEUP"], 0x8001: KEY["PAGEDOWN"],   # Ch+ / Ch-
-    0x80B0: KEY["PLAYPAUSE"], 0x80BA: KEY["PLAYPAUSE"],  # Play / Pause (MR20 codes, untested)
-    0x8071: KEY["F2"], 0x8063: KEY["F3"], 0x8061: KEY["F4"],  # Green / Yellow / Blue (MR20 codes)
+    0x8071: KEY["F2"], 0x8063: KEY["F3"], 0x8061: KEY["F4"],  # Green / Yellow / Blue
 }
 KEYMAP.update({0x8010 + n: (11 if n == 0 else 1 + n) for n in range(10)})  # digits → KEY_0..KEY_9
 

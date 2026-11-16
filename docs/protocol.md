@@ -1,8 +1,8 @@
 # LG Magic Remote MR25GB: BLE protocol
 
 Reverse-engineered with BlueZ/btmon and verified by relaying between a real MR25GB and an LG OLED TV (webOS,
-2025 model). Everything here was observed on one remote and one TV; items marked *untested* come from the
-older MR20 (see [sirfragles/lgmagic](https://github.com/sirfragles/lgmagic)).
+2025 model). Everything here was observed on one remote and one TV. The older MR20 is documented in
+[sirfragles/lgmagic](https://github.com/sirfragles/lgmagic).
 
 ## Overview
 
@@ -112,9 +112,15 @@ The declared sizes don't match the actual FD notifications (19 bytes).
 | Left / Right | 0x8007 / 0x8006 | Ch+ / Ch− | 0x8000 / 0x8001 |
 | Back | 0x8028 | Digits 0–9 | 0x8010 + n |
 | Home | 0x807C | Red | 0x8072 |
-| Settings *(untested)* | 0x8043 | Green / Yellow / Blue *(untested)* | 0x8071 / 0x8063 / 0x8061 |
-| "…" *(untested)* | 0x8045 | Play / Pause *(untested)* | 0x80B0 / 0x80BA |
-| Voice *(untested)* | 0x808B | | |
+| Settings | 0x8043 | Green / Yellow / Blue | 0x8071 / 0x8063 / 0x8061 |
+| "…" | 0x8045 | Voice | 0x808B |
+| Guide / List | 0x80AB | Input | 0x80A1 |
+| Netflix | 0x8056 | Prime Video | 0x805C |
+| Disney+ | 0x8031 | Rakuten TV | 0x8049 |
+| Google Assistant | 0x8048 | Alexa | 0x800C |
+
+The MR25GB has no Play/Pause key. Long-press functions (printed with ◎ on the remote) have no codes of their
+own: the code repeats while the key is held and the TV measures the time.
 
 Pseudo-codes sent by the remote: **0x803E** "active" (after its central subscribes, and when waking),
 **0x803F** "idle" (after a sleep command, before it drops the link). Power has no BLE code.

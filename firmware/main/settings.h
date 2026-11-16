@@ -9,6 +9,7 @@ typedef struct {
     uint32_t pc_sleep;  // PC mode: send the sleep command after this many s idle (0 = never)
     uint32_t smooth;    // PC mode: spread each report's pointer motion over this many ms (0 = send at once)
     float dead;         // PC mode: soft dead zone on the rotation rate, gyro LSB (~16.9 per °/s)
+    float drag;         // PC mode: px the pointer must travel with a mouse button held before it moves (0 = off)
                         // New fields go at the end: settings_load() keeps defaults for fields an older blob lacks.
 } settings_t;
 

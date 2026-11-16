@@ -41,7 +41,5 @@ Start with [README.md](README.md) and [docs/](docs/); [docs/protocol.md](docs/pr
   accepting the remote's own update request in `BLE_GAP_EVENT_L2CAP_UPDATE_REQ` rebooted the bridge.
 - Configuration page: WebSerial (Chrome/Edge) on top of the console commands: key map, mode-switch key + hold time,
   pointer settings. Key map and switch key are still compiled in (`KEYMAP`, `RED` in `pc.c`) and would move to NVS.
-- Unconfirmed button codes (Settings, colour keys except red, Play/Pause, "…", Voice): log them with `status`
-  running and fix `pc.c`/docs.
 - Advertising flags: 0x06 works; the real remote uses 0x05, never confirmed with the bridge.
 - FE report (probably microphone audio) is unexplored.

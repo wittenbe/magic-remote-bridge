@@ -48,7 +48,7 @@ static const struct {
     {0x8007, OUT_KEY, HID_KEY_ARROW_LEFT},
     {0x8006, OUT_KEY, HID_KEY_ARROW_RIGHT},
     {0x8044, OUT_MOUSE, MOUSE_BUTTON_LEFT},       // OK / wheel click
-    {0x8043, OUT_MOUSE, MOUSE_BUTTON_RIGHT},      // Settings (MR20 code, untested)
+    {0x8043, OUT_MOUSE, MOUSE_BUTTON_RIGHT},      // Settings
     {0x8028, OUT_KEY, HID_KEY_ESCAPE},            // Back
     {0x807C, OUT_KEY, HID_KEY_GUI_LEFT},          // Home → Start menu
     {0x8002, OUT_CONSUMER, HID_USAGE_CONSUMER_VOLUME_INCREMENT},
@@ -56,11 +56,9 @@ static const struct {
     {0x8009, OUT_CONSUMER, HID_USAGE_CONSUMER_MUTE},
     {0x8000, OUT_KEY, HID_KEY_PAGE_UP},           // Ch+
     {0x8001, OUT_KEY, HID_KEY_PAGE_DOWN},         // Ch-
-    {0x80B0, OUT_CONSUMER, HID_USAGE_CONSUMER_PLAY_PAUSE},  // Play (MR20 code, untested)
-    {0x80BA, OUT_CONSUMER, HID_USAGE_CONSUMER_PLAY_PAUSE},  // Pause (MR20 code, untested)
-    {0x8071, OUT_KEY, HID_KEY_F2},                // Green (MR20 code)
-    {0x8063, OUT_KEY, HID_KEY_F3},                // Yellow (MR20 code)
-    {0x8061, OUT_KEY, HID_KEY_F4},                // Blue (MR20 code)
+    {0x8071, OUT_KEY, HID_KEY_F2},                // Green
+    {0x8063, OUT_KEY, HID_KEY_F3},                // Yellow
+    {0x8061, OUT_KEY, HID_KEY_F4},                // Blue
     {0x8010, OUT_KEY, HID_KEY_0}, {0x8011, OUT_KEY, HID_KEY_1}, {0x8012, OUT_KEY, HID_KEY_2},
     {0x8013, OUT_KEY, HID_KEY_3}, {0x8014, OUT_KEY, HID_KEY_4}, {0x8015, OUT_KEY, HID_KEY_5},
     {0x8016, OUT_KEY, HID_KEY_6}, {0x8017, OUT_KEY, HID_KEY_7}, {0x8018, OUT_KEY, HID_KEY_8},
@@ -83,6 +81,8 @@ static int16_t still_min[3], still_max[3];
 static int still_n;
 static bool resting;
 static int64_t freeze_until;
+static bool drag_lock;
+static float lock_x, lock_y;
 static int64_t last_activity;
 static bool sleep_sent;
 static bool tv_sleep_pending;
@@ -318,6 +318,15 @@ void pc_on_fd(const uint8_t *d, uint16_t len)
         if ((li >= 0 && KEYMAP[li].type == OUT_MOUSE) || (bi >= 0 && KEYMAP[bi].type == OUT_MOUSE)) {
             freeze_until = now + CLICK_FREEZE_US;
         }
+        // A click must not turn into a drag: the hand moves a little while pressing (after the freeze above, and
+        // during a slower click). With a mouse button down, the pointer stays put until it has travelled `drag` px.
+        bool was_down = li >= 0 && KEYMAP[li].type == OUT_MOUSE;
+        if (mouse_buttons && !was_down) {
+            drag_lock = settings.drag > 0;
+            lock_x = lock_y = 0;
+        } else if (!mouse_buttons) {
+            drag_lock = false;
+        }
         last_btn = btn;
     }
 
@@ -354,6 +363,17 @@ void pc_on_fd(const uint8_t *d, uint16_t len)
 
     float dx, dy;
     pointer(g, a, now, &dx, &dy);
+    if (drag_lock) {
+        lock_x += dx;
+        lock_y += dy;
+        dx = dy = 0;
+        if (hypotf(lock_x, lock_y) >= settings.drag) {
+            // a real drag: catch up so the cursor ends where the remote points
+            dx = lock_x;
+            dy = lock_y;
+            drag_lock = false;
+        }
+    }
     if (dx || dy || wheel) {
         usb_mouse_motion(dx, dy, wheel);
     }
